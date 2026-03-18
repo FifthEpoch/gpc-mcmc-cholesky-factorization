@@ -69,6 +69,8 @@ def main() -> None:
 
     # ---------- Sweep 1 & 2: error/time vs k (fixed N) ----------
     A_fixed, X_fixed = build_kernel_matrix(fixed_n, d=d, bandwidth=bandwidth, seed=11)
+    print("Sample of X_fixed:\n", X_fixed[:5])          # first 5 points
+    print("Sample of kernel matrix:\n", A_fixed[:5, :5])  # top-left 5x5 block
     trace_fixed = A_fixed.trace()
 
     methods = {
