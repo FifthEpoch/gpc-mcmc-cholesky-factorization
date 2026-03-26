@@ -2,3 +2,6 @@ numpy
 scipy
 scikit-learn
 emcee
+matplotlib
+tqdm
+gdown

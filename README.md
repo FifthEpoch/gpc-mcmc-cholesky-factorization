@@ -2,6 +2,24 @@
 
 Experiment code for benchmarking RPCholesky variants for scalable kernel matrix approximation.
 
+## Environment setup
+
+### Quick start (base environment)
+```bash
+bash scripts/setup_env.sh
+source .venv/bin/activate
+```
+
+### Include dataset tooling dependencies
+```bash
+bash scripts/setup_env.sh --with-datasets
+source .venv/bin/activate
+```
+
+This installs a local virtual environment and dependencies required for:
+- Experiment 0 benchmarking
+- Dataset download helper script for later experiments
+
 ## Experiment 0: RPCholesky scaling benchmark
 
 ### Objective
@@ -45,4 +63,47 @@ Error metric:
 
 ```bash
 python experiments/exp0_algorithm_verification.py
+```
+
+This writes:
+- `data/exp0_results.mat`
+- `data/exp0_error_vs_k.png`
+- `data/exp0_time_vs_k.png`
+- `data/exp0_time_vs_N.png`
+
+## Verify Experiment 0 outputs
+
+Use this quick checklist against the generated plots:
+- `exp0_error_vs_k.png`: relative trace error should decrease as `k` increases.
+- `exp0_time_vs_k.png`: runtime should increase with `k`; Basic should be much slower than Block/Accel.
+- `exp0_time_vs_N.png`: runtime should increase with `N`; Basic is skipped for `N > 10000`.
+
+## Download datasets for later experiments
+
+Use:
+```bash
+python scripts/download_datasets.py --datasets all --root datasets
+```
+
+You can also fetch datasets individually:
+```bash
+python scripts/download_datasets.py --datasets pcam --root datasets
+python scripts/download_datasets.py --datasets camelyon17 --root datasets
+python scripts/download_datasets.py --datasets embed --root datasets
+```
+
+### Notes by dataset
+- **PCam**: downloaded from official PatchCamelyon Google Drive files and MD5-verified.
+- **CAMELYON17-WILDS**: downloaded through `wilds.get_dataset(..., download=True)`.
+- **EMBED**: requires approval first. Submit access request:
+  - [Access request form](https://forms.gle/6YVFKTz7ucEJKEWw8)
+  - [Documentation](https://docs.hitilab.com/)
+  - [Data use agreement](https://github.com/Emory-HITI/EMBED_Open_Data/blob/main/EMBED_license.md)
+
+After EMBED approval, sync from your approved S3 path:
+```bash
+python scripts/download_datasets.py \
+  --datasets embed \
+  --root datasets \
+  --embed-s3-uri s3://<approved-bucket-or-prefix>
 ```

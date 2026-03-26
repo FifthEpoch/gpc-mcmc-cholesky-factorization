@@ -1,4 +1,3 @@
-@"
 __pycache__/
 *.py[cod]
 .venv/
@@ -10,4 +9,4 @@ venv/
 .vscode/
 .idea/
 data/
-"@ | Out-File -FilePath ".gitignore" -Encoding utf8
+datasets/
