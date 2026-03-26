@@ -2,23 +2,46 @@
 
 Experiment code for benchmarking RPCholesky variants for scalable kernel matrix approximation.
 
-## Environment setup
+## Environment setup (cluster)
 
-### Quick start (base environment)
+On this cluster, `/home` has a very small disk quota. All conda environments,
+packages, and caches are stored under `/scratch/<NETID>` instead.
+
+### Step 1: Set scratch environment variables
+
 ```bash
-bash scripts/setup_env.sh
-source .venv/bin/activate
+NETID=ab1234 source scripts/set_scratch_env.sh
 ```
 
-### Include dataset tooling dependencies
+This creates the directory structure under `/scratch/<NETID>` and exports
+`CONDA_ENVS_DIRS`, `CONDA_PKGS_DIRS`, `PIP_CACHE_DIR`, `HF_HOME`, `TMPDIR`,
+etc. so nothing lands in `/home`.
+
+### Step 2: Create the conda environment
+
 ```bash
-bash scripts/setup_env.sh --with-datasets
-source .venv/bin/activate
+NETID=ab1234 bash scripts/setup_env.sh
 ```
 
-This installs a local virtual environment and dependencies required for:
-- Experiment 0 benchmarking
-- Dataset download helper script for later experiments
+This creates a conda env at `/scratch/<NETID>/conda-envs/gpc` with Python 3.12
+and installs all base dependencies (`numpy`, `scipy`, `scikit-learn`, `emcee`,
+`matplotlib`, `tqdm`, `gdown`).
+
+To also install dataset download dependencies (WILDS + PyTorch):
+
+```bash
+NETID=ab1234 bash scripts/setup_env.sh --with-datasets
+```
+
+### Step 3: Submit a SLURM job
+
+```bash
+sbatch --export=ALL,NETID=ab1234 scripts/exp0_algorithm_verification.sbatch
+```
+
+The sbatch template automatically sources `set_scratch_env.sh`, activates the
+conda env, and handles the critical `unset PYTHONHOME PYTHONPATH` step required
+on this cluster.
 
 ## Experiment 0: RPCholesky scaling benchmark
 

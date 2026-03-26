@@ -12,65 +12,37 @@ set -euo pipefail
 export PYTHONNOUSERSITE=1
 
 # =============================================================================
-# User-configurable paths  (EDIT THIS SECTION BEFORE YOUR FIRST SUBMISSION)
+# User-configurable paths
 # =============================================================================
+# Submit with:
+#   sbatch --export=ALL,NETID=ab1234 scripts/exp0_algorithm_verification.sbatch
 #
-# On this cluster, /home has a very small quota. All large files -- including
-# conda environments -- should live under /scratch/<NETID>.
+# Optionally override CONDA_ENV or PROJECT_ROOT:
+#   sbatch --export=ALL,NETID=ab1234,CONDA_ENV=/scratch/ab1234/my-env \
+#          scripts/exp0_algorithm_verification.sbatch
 #
-# STEP 1: Set your NetID.
-#   Either edit the line below, or pass it at submit time:
-#     sbatch --export=ALL,NETID=ab1234 scripts/exp0_algorithm_verification.sbatch
-#
+# If you haven't created a conda env yet, run on the login node first:
+#   NETID=ab1234 bash scripts/setup_env.sh
+
 NETID="${NETID:-<netid>}"
 if [ "${NETID}" = "<netid>" ]; then
-  echo "ERROR: NETID is required." >&2
-  echo "  Option A: edit NETID in this file        (line above)" >&2
-  echo "  Option B: sbatch --export=ALL,NETID=ab1234 scripts/exp0_algorithm_verification.sbatch" >&2
+  echo "ERROR: NETID is required. Submit with --export=ALL,NETID=<your-netid>." >&2
   exit 1
 fi
 
 SCRATCH_BASE="/scratch/${NETID}"
-
-# STEP 2: Point to your conda environment.
-#   Your conda env must live under /scratch/<NETID> (not /home) due to the
-#   cluster's disk quota policy. Typical locations:
-#     /scratch/<NETID>/conda-envs/gpc
-#     /scratch/<NETID>/.conda/envs/gpc
-#     /scratch/<NETID>/miniconda3/envs/gpc
-#
-#   Option A: edit the default path below.
-#   Option B: pass it at submit time:
-#     sbatch --export=ALL,NETID=ab1234,CONDA_ENV=/scratch/ab1234/my-env \
-#            scripts/exp0_algorithm_verification.sbatch
-#
+PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
 
-# Auto-discovery: if the default path doesn't exist, check common locations.
-if [ ! -d "${CONDA_ENV}" ]; then
-  echo "WARN: ${CONDA_ENV} not found. Searching common locations..." >&2
-  for candidate in \
-    "${SCRATCH_BASE}/conda-envs/gpc" \
-    "${SCRATCH_BASE}/.conda/envs/gpc" \
-    "${SCRATCH_BASE}/miniconda3/envs/gpc" \
-    "${SCRATCH_BASE}/anaconda3/envs/gpc"; do
-    if [ -d "${candidate}" ]; then
-      echo "  Found conda env at: ${candidate}" >&2
-      CONDA_ENV="${candidate}"
-      break
-    fi
-  done
+# =============================================================================
+# Load scratch environment (caches, tmp dirs, etc.)
+# =============================================================================
+SCRIPT_DIR="${PROJECT_ROOT}/scripts"
+if [ -f "${SCRIPT_DIR}/set_scratch_env.sh" ]; then
+  source "${SCRIPT_DIR}/set_scratch_env.sh"
+else
+  echo "WARN: set_scratch_env.sh not found, continuing without it." >&2
 fi
-
-# STEP 3 (optional): Override the project root if your clone is somewhere else.
-PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
-
-#
-# If you haven't created a conda env yet, run:
-#   conda create -p /scratch/<NETID>/conda-envs/gpc python=3.12 -y
-#   conda activate /scratch/<NETID>/conda-envs/gpc
-#   pip install numpy scipy scikit-learn matplotlib tqdm gdown
-#
 
 # =============================================================================
 # Conda activation (cluster-specific, CRITICAL sequence)
@@ -88,6 +60,8 @@ source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
 
 if [ ! -d "${CONDA_ENV}" ]; then
   echo "ERROR: Conda env not found at ${CONDA_ENV}" >&2
+  echo "Create it first on the login node:" >&2
+  echo "  NETID=${NETID} bash scripts/setup_env.sh" >&2
   exit 1
 fi
 
