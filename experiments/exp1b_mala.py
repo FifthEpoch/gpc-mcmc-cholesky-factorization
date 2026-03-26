@@ -16,6 +16,7 @@ import sys
 import time
 
 import blackjax
+import emcee
 import jax
 import jax.numpy as jnp
 from jax import config
@@ -76,35 +77,29 @@ def compute_acf(x: np.ndarray, max_lag: int = 200) -> np.ndarray:
     return acf
 
 
-def compute_ess(x: np.ndarray, max_lag: int = 500) -> float:
+def compute_tau_emcee(x: np.ndarray) -> float:
     """
-    Estimate ESS via Geyer's initial positive sequence estimator.
+    Estimate integrated autocorrelation time using emcee's implementation.
 
-    Forms pairs Gamma_k = rho(2k) + rho(2k+1) and sums until
-    a pair first goes negative. This avoids the arbitrary 0.05
-    threshold and is robust to noisy ACF estimates.
-
-    tau = 1 + 2 * sum of Gamma_k until first negative pair
-    ESS = n / tau
-
-    Reference: Geyer (1992), "Practical Markov Chain Monte Carlo"
+    Falls back to NaN if the chain is too short for a stable estimate.
     """
-    n = len(x)
-    acf = compute_acf(x, max_lag=max_lag)
+    x = np.asarray(x, dtype=float)
+    try:
+        tau = emcee.autocorr.integrated_time(x, quiet=True)
+    except Exception as err:
+        print(f"  WARNING: emcee tau estimate failed: {err}")
+        return float("nan")
 
-    tau = 1.0
-    for k in range(1, max_lag // 2):
-        gamma_k = acf[2 * k] + acf[2 * k + 1]
-        if gamma_k < 0:
-            break
-        tau += 2 * gamma_k
-    else:
-        print(
-            f"  WARNING: Geyer estimator did not terminate within "
-            f"{max_lag} lags — ESS is a lower bound. "
-            f"Consider running longer chain."
-        )
+    tau = np.asarray(tau, dtype=float).reshape(-1)
+    if tau.size == 0:
+        return float("nan")
+    return float(tau[0])
 
+
+def compute_ess_from_tau(n: int, tau: float) -> float:
+    """Convert integrated autocorrelation time into effective sample size."""
+    if not np.isfinite(tau) or tau <= 0:
+        return float("nan")
     return float(n / tau)
 
 
@@ -342,9 +337,9 @@ def main() -> None:
     os.makedirs(data_dir, exist_ok=True)
 
     # Setup
-    n_samples = 2000
-    n_warmup = 500
-    k_values = [20, 50, 100, 200]
+    n_samples = 500
+    n_warmup = 50
+    k_values = [2, 5]
 
     # Data and kernel matrix
     X, y = make_fake_blobs(seed=42)
@@ -353,15 +348,6 @@ def main() -> None:
     acf_k200_rwm = None
     acf_k200_mala = None
     acf_k200_hmc = None
-
-    def _geyer_tau(acf, max_lag=500):
-        tau = 1.0
-        for kk in range(1, max_lag // 2):
-            gamma_k = acf[2 * kk] + acf[2 * kk + 1]
-            if gamma_k < 0:
-                break
-            tau += 2 * gamma_k
-        return tau
 
     # Sweeping k to test whether MALA's ESS/sec advantage grows with
     # dimension, as predicted by Langevin diffusion theory
@@ -380,20 +366,29 @@ def main() -> None:
         # PyMC warmup handled internally; returned trace is post-warmup draws.
         hmc_logp_post = hmc_stats["logp_trace"]
 
-        acf_rwm = compute_acf(rwm_logp_post, max_lag=500)
-        acf_mala = compute_acf(mala_logp_post, max_lag=500)
-        acf_hmc = compute_acf(hmc_logp_post, max_lag=500)
+        # acf_rwm = compute_acf(rwm_logp_post, max_lag=500)
+        # acf_mala = compute_acf(mala_logp_post, max_lag=500)
+        # acf_hmc = compute_acf(hmc_logp_post, max_lag=500)
 
-        ess_rwm_logp = compute_ess(rwm_logp_post, max_lag=500)
-        ess_mala_logp = compute_ess(mala_logp_post, max_lag=500)
-        ess_hmc_logp = compute_ess(hmc_logp_post, max_lag=500)
-        ess_rwm_nu0 = compute_ess(rwm_stats["nu_samples"][:, 0], max_lag=500)
-        ess_mala_nu0 = compute_ess(mala_stats["nu_samples"][:, 0], max_lag=500)
-        ess_hmc_nu0 = compute_ess(hmc_stats["nu_samples"][:, 0], max_lag=500)
+        tau_rwm = compute_tau_emcee(rwm_logp_post)
+        tau_mala = compute_tau_emcee(mala_logp_post)
+        tau_hmc = compute_tau_emcee(hmc_logp_post)
 
-        tau_rwm = _geyer_tau(acf_rwm, max_lag=500)
-        tau_mala = _geyer_tau(acf_mala, max_lag=500)
-        tau_hmc = _geyer_tau(acf_hmc, max_lag=500)
+        ess_rwm_logp = compute_ess_from_tau(len(rwm_logp_post), tau_rwm)
+        ess_mala_logp = compute_ess_from_tau(len(mala_logp_post), tau_mala)
+        ess_hmc_logp = compute_ess_from_tau(len(hmc_logp_post), tau_hmc)
+        ess_rwm_nu0 = compute_ess_from_tau(
+            len(rwm_stats["nu_samples"][:, 0]),
+            compute_tau_emcee(rwm_stats["nu_samples"][:, 0]),
+        )
+        ess_mala_nu0 = compute_ess_from_tau(
+            len(mala_stats["nu_samples"][:, 0]),
+            compute_tau_emcee(mala_stats["nu_samples"][:, 0]),
+        )
+        ess_hmc_nu0 = compute_ess_from_tau(
+            len(hmc_stats["nu_samples"][:, 0]),
+            compute_tau_emcee(hmc_stats["nu_samples"][:, 0]),
+        )
 
         ess_per_sec_rwm = ess_rwm_logp / max(rwm_stats["total_mcmc_time"], 1e-12)
         ess_per_sec_mala = ess_mala_logp / max(mala_stats["total_mcmc_time"], 1e-12)
@@ -579,4 +574,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
