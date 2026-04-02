@@ -64,6 +64,7 @@ def accelerated_rpcholesky(
     b: int | str = "auto",
     stoptol: float | None = 1e-13,
     verbose: bool = False,
+    seed: int | None = None,
 ) -> PSDLowRank:
     """
     Accelerated randomly pivoted Cholesky factorization (Algorithm 2.2).
@@ -87,6 +88,9 @@ def accelerated_rpcholesky(
         no early stopping based on trace is applied.
     verbose : bool, optional
         If True, prints per-block acceptance statistics.
+    seed : int or None, optional
+        Seed for the internal RNG used to sample pivot proposals. When
+        provided, repeated runs are reproducible.
 
     Returns
     -------
@@ -113,7 +117,7 @@ def accelerated_rpcholesky(
     G = np.zeros((k, n), dtype=float)
     rows = np.zeros((k, n), dtype=float)
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed)
     arr_idx = np.zeros(k, dtype=int)
 
     counter = 0
@@ -182,9 +186,11 @@ def arpcholesky(
     b: int | str = "auto",
     stoptol: float | None = 1e-13,
     verbose: bool = False,
+    seed: int | None = None,
 ) -> PSDLowRank:
     """
     Convenience wrapper for accelerated_rpcholesky.
     """
-    return accelerated_rpcholesky(A, k, b=b, stoptol=stoptol, verbose=verbose)
-
+    return accelerated_rpcholesky(
+        A, k, b=b, stoptol=stoptol, verbose=verbose, seed=seed
+    )
