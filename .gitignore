@@ -10,3 +10,4 @@ venv/
 .idea/
 data/
 datasets/
+data/embeddings/
