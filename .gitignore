@@ -8,5 +8,7 @@ venv/
 .mypy_cache/
 .vscode/
 .idea/
+.cursor/
 data/
 datasets/
+data/embeddings/

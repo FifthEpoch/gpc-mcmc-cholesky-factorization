@@ -35,11 +35,15 @@ export CONDA_ENVS_DIRS="${SCRATCH_BASE}/conda-envs"
 export CONDA_PKGS_DIRS="${SCRATCH_BASE}/conda-pkgs"
 
 # ============================================================================
-# Cache directories
+# General cache directories
 # ============================================================================
 export XDG_CACHE_HOME="${SCRATCH_BASE}/py-cache"
+
+# Pip cache
 export PIP_CACHE_DIR="${SCRATCH_BASE}/py-cache/pip"
 export PIP_NO_CACHE_DIR=1
+
+# Python bytecode cache
 export PYTHONPYCACHEPREFIX="${SCRATCH_BASE}/py-cache/python"
 
 # Hugging Face caches (used by dataset download scripts)
@@ -69,4 +73,4 @@ echo "HF_HOME:         ${HF_HOME}"
 echo "TMPDIR:          ${TMPDIR}"
 echo "=================================="
 echo ""
-echo "All installations and caches redirected to /scratch/${NETID}"
+echo "All installations and caches will be redirected to /scratch/${NETID}"

@@ -130,3 +130,105 @@ python scripts/download_datasets.py \
   --root datasets \
   --embed-s3-uri s3://<approved-bucket-or-prefix>
 ```
+
+## Experiment 3: Deterministic Neural Network Baseline
+
+### Overview
+
+Trains a 2-layer MLP classifier on frozen DenseNet-121 embeddings, evaluating
+predictive performance (AUROC, AUPRC), calibration (ECE, Brier score),
+sensitivity, and false-negative rate on PCam, CAMELYON17-WILDS, and EMBED.
+
+### Pipeline
+
+1. **Extract embeddings** -- pass raw images through frozen DenseNet-121 and
+   save 1024-dim feature vectors as `.npy` files.
+2. **Train + evaluate** -- train the MLP head on the embeddings, then compute
+   all metrics on the held-out test split.
+
+### Running locally
+
+```bash
+# Step 1: extract embeddings (needs GPU for reasonable speed)
+python experiments/extract_embeddings.py \
+    --dataset pcam --data-root datasets --device cuda
+
+# Step 2: train & evaluate
+python experiments/exp3_nn_baseline.py \
+    --dataset pcam --embedding-dir data/embeddings --device cuda
+```
+
+Replace `pcam` with `camelyon17` or `embed` as needed.
+
+### Running on the cluster (SLURM)
+
+```bash
+sbatch --export=ALL,NETID=ab1234,DATASET=pcam \
+       scripts/exp3_nn_baseline.sbatch
+```
+
+Optional overrides:
+
+| Variable      | Default       | Description                                |
+| ------------- | ------------- | ------------------------------------------ |
+| `DATASET`     | `pcam`        | `pcam`, `camelyon17`, or `embed`           |
+| `ENCODER`     | `densenet121` | `densenet121` or `dinov2_vitl14`           |
+| `SKIP_EMBED`  | `0`           | Set to `1` to reuse existing embeddings    |
+
+### Outputs
+
+All outputs are written to `data/`:
+
+- `exp3_<dataset>_results.json` -- full metric dictionary
+- `exp3_<dataset>_calibration.png` -- reliability diagram
+- `exp3_<dataset>_roc.png` -- ROC curve
+- `exp3_camelyon17_per_hospital.json` -- per-hospital breakdown (CAMELYON17 only)
+
+## Experiment 4: TabPFN Tabular Model Baseline
+
+### Overview
+
+Uses [TabPFN](https://github.com/PriorLabs/TabPFN) (Hollmann et al., 2025),
+a pre-trained transformer foundation model for tabular data, as a classifier
+on the same frozen embeddings used in Experiment 3. TabPFN performs in-context
+learning in a single forward pass -- no gradient-based training loop is needed.
+
+TabPFN works best on datasets with up to ~50k samples. For larger training sets
+the script automatically subsamples (stratified) to `--max-train-samples`.
+
+### Prerequisites
+
+Embeddings must already exist in `data/embeddings/` (produced by
+`experiments/extract_embeddings.py` from Experiment 3).
+
+### Running locally
+
+```bash
+python experiments/exp4_tabpfn_baseline.py \
+    --dataset pcam --embedding-dir data/embeddings --device cuda
+```
+
+Replace `pcam` with `camelyon17` or `embed` as needed.
+
+### Running on the cluster (SLURM)
+
+```bash
+sbatch --export=ALL,NETID=ab1234,DATASET=pcam \
+       scripts/exp4_tabpfn_baseline.sbatch
+```
+
+Optional overrides:
+
+| Variable              | Default | Description                                       |
+| --------------------- | ------- | ------------------------------------------------- |
+| `DATASET`             | `pcam`  | `pcam`, `camelyon17`, or `embed`                  |
+| `MAX_TRAIN_SAMPLES`   | `50000` | Subsample training set to this size for TabPFN    |
+
+### Outputs
+
+All outputs are written to `data/`:
+
+- `exp4_<dataset>_results.json` -- full metric dictionary
+- `exp4_<dataset>_calibration.png` -- reliability diagram
+- `exp4_<dataset>_roc.png` -- ROC curve
+- `exp4_camelyon17_per_hospital.json` -- per-hospital breakdown (CAMELYON17 only)
