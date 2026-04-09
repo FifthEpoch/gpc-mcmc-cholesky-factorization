@@ -142,11 +142,46 @@ def download_pcam(target_dir: Path) -> None:
         print(f"[PCam] Verified: {filename}")
 
 
+def _fix_ssl_certs() -> None:
+    """Ensure Python can verify SSL certificates (macOS framework Python
+    ships without root certs; installing *certifi* and pointing
+    ``SSL_CERT_FILE`` at its bundle fixes the issue)."""
+    import os
+    import ssl
+
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = True
+        urllib.request.urlopen(
+            urllib.request.Request("https://wilds.stanford.edu", method="HEAD"),
+            context=ctx,
+            timeout=5,
+        )
+        return  # certs already work
+    except Exception:
+        pass
+
+    _ensure_package("certifi")
+    import certifi
+
+    os.environ["SSL_CERT_FILE"] = certifi.where()
+    os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
+    print(f"[setup] SSL_CERT_FILE set to {certifi.where()}")
+
+
 def download_camelyon17_wilds(target_dir: Path) -> None:
+    _fix_ssl_certs()
     _ensure_package("wilds")
     from wilds import get_dataset
 
     target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clean up corrupted archive from a previous failed attempt
+    archive = target_dir / "camelyon17_v1.0" / "archive.tar.gz"
+    if archive.exists() and archive.stat().st_size == 0:
+        print("[CAMELYON17-WILDS] Removing empty/corrupted archive from prior run ...")
+        archive.unlink()
+
     print(f"[CAMELYON17-WILDS] Root directory: {target_dir}")
     _ = get_dataset(dataset="camelyon17", download=True, root_dir=str(target_dir))
     print("[CAMELYON17-WILDS] Download complete.")
