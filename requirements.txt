@@ -9,3 +9,4 @@ torch
 torchvision
 h5py
 tabpfn
+datasets

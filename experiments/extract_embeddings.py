@@ -148,31 +148,49 @@ def load_pcam_split(data_root: Path, split: str) -> tuple[np.ndarray, np.ndarray
     return images, labels
 
 
+HF_CAMELYON17_REPO = "wltjr1007/Camelyon17-WILDS"
+
+_HF_SPLIT_MAP = {"train": "train", "val": "validation", "test": "test"}
+
+
 def load_camelyon17_split(
     data_root: Path, split: str
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Load a CAMELYON17-WILDS split. Returns (images, labels, hospital_ids)."""
-    from wilds import get_dataset
+    """Load a CAMELYON17-WILDS split from the HuggingFace mirror.
 
-    dataset = get_dataset(
-        dataset="camelyon17", download=False, root_dir=str(data_root / "camelyon17_wilds")
-    )
-    subset = dataset.get_subset(split)
+    Returns (images, labels, hospital_ids).  The original CodaLab source
+    used by the ``wilds`` library has been broken since June 2025, so we
+    load from ``wltjr1007/Camelyon17-WILDS`` on HuggingFace instead.
+    """
+    from datasets import load_dataset
+
+    hf_split = _HF_SPLIT_MAP.get(split, split)
+    cache_dir = str(data_root / "camelyon17_wilds" / "hf_cache")
+    print(f"[CAMELYON17] Loading {hf_split} split from HuggingFace ({HF_CAMELYON17_REPO}) ...")
+
+    ds = load_dataset(HF_CAMELYON17_REPO, split=hf_split, cache_dir=cache_dir)
 
     images_list = []
     labels_list = []
     hospitals_list = []
 
-    loader = DataLoader(subset, batch_size=64, shuffle=False, num_workers=2)
-    for batch in tqdm(loader, desc=f"Loading CAMELYON17 {split}", unit="batch"):
-        x, y, metadata = batch
-        images_list.append((x.permute(0, 2, 3, 1).numpy() * 255).astype(np.uint8))
-        labels_list.append(y.numpy())
-        hospitals_list.append(metadata[:, 0].numpy())
+    has_hospital = "center" in ds.column_names or "hospital" in ds.column_names
+    hospital_col = "center" if "center" in ds.column_names else "hospital"
 
-    images = np.concatenate(images_list)
-    labels = np.concatenate(labels_list)
-    hospitals = np.concatenate(hospitals_list)
+    for row in tqdm(ds, desc=f"Loading CAMELYON17 {split}", unit="img"):
+        img = row["image"]
+        if hasattr(img, "convert"):
+            img = img.convert("RGB")
+        images_list.append(np.array(img, dtype=np.uint8))
+        labels_list.append(int(row["label"]))
+        if has_hospital:
+            hospitals_list.append(int(row[hospital_col]))
+        else:
+            hospitals_list.append(0)
+
+    images = np.stack(images_list)
+    labels = np.array(labels_list, dtype=np.int64)
+    hospitals = np.array(hospitals_list, dtype=np.int64)
     return images, labels, hospitals
 
 
