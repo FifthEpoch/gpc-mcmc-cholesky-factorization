@@ -13,8 +13,24 @@ from __future__ import annotations
 import argparse
 import hashlib
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict
+
+
+def _ensure_package(package: str, pip_name: str | None = None) -> None:
+    """Import *package*; if missing, install it via pip and retry."""
+    try:
+        __import__(package)
+    except ImportError:
+        install = pip_name or package
+        print(f"[setup] {package!r} not found — installing via pip ...")
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--quiet", install]
+        )
+
+_ensure_package("tqdm")
+_ensure_package("gdown")
 
 from tqdm import tqdm
 
@@ -68,13 +84,7 @@ def md5sum(path: Path, block_size: int = 1024 * 1024) -> str:
 
 
 def download_pcam(target_dir: Path) -> None:
-    try:
-        import gdown
-    except ImportError as exc:
-        raise RuntimeError(
-            "gdown is not installed. Install dependencies first "
-            "(pip install -r requirements.txt)."
-        ) from exc
+    import gdown
 
     target_dir.mkdir(parents=True, exist_ok=True)
     print(f"[PCam] Download directory: {target_dir}")
@@ -103,13 +113,8 @@ def download_pcam(target_dir: Path) -> None:
 
 
 def download_camelyon17_wilds(target_dir: Path) -> None:
-    try:
-        from wilds import get_dataset
-    except ImportError as exc:
-        raise RuntimeError(
-            "wilds is not installed. Run:\n"
-            "  pip install wilds torch torchvision"
-        ) from exc
+    _ensure_package("wilds")
+    from wilds import get_dataset
 
     target_dir.mkdir(parents=True, exist_ok=True)
     print(f"[CAMELYON17-WILDS] Root directory: {target_dir}")
