@@ -115,8 +115,35 @@ python scripts/download_datasets.py --datasets camelyon17 --root datasets
 python scripts/download_datasets.py --datasets embed --root datasets
 ```
 
+If PCam is already downloaded and you just want usable split folders with
+decompressed HDF5 files, run:
+```bash
+python scripts/download_datasets.py \
+  --datasets pcam \
+  --root /scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets \
+  --pcam-source existing \
+  --prepare-pcam
+```
+
+That creates:
+- `datasets/pcam/train/{x.h5,y.h5,meta.csv}`
+- `datasets/pcam/valid/{x.h5,y.h5,meta.csv}`
+- `datasets/pcam/test/{x.h5,y.h5,meta.csv}`
+
+If you want PCam directly from Hugging Face instead of the original archives, run:
+```bash
+python scripts/download_datasets.py \
+  --datasets pcam \
+  --root /scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets \
+  --pcam-source hf
+```
+
 ### Notes by dataset
 - **PCam**: downloaded from official PatchCamelyon Google Drive files and MD5-verified.
+  - You can also use `--pcam-source hf` to download the Hugging Face parquet
+    shards from `1aurent/PatchCamelyon`.
+  - You can use `--pcam-source existing --prepare-pcam` to reorganize already
+    downloaded `*.h5.gz` files into `train/`, `valid/`, and `test/`.
 - **CAMELYON17-WILDS**: downloaded through `wilds.get_dataset(..., download=True)`.
 - **EMBED**: requires approval first. Submit access request:
   - [Access request form](https://forms.gle/6YVFKTz7ucEJKEWw8)
