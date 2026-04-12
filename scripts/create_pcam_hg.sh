@@ -5,6 +5,10 @@
 #   <output>/test/images/1.png
 # plus labels.csv for each split.
 
+# bash scripts/create_pcam_hg.sh \
+#  /scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets/pcam-hg
+
+
 set -euo pipefail
 
 usage() {
