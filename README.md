@@ -172,6 +172,19 @@ python scripts/download_datasets.py \
   --pcam-source hf
 ```
 
+If you want a separate Hugging Face-based export for CAMELYON17-WILDS that
+creates a new `camelyon17-hg/` directory with images named `1.png`, `2.png`,
+... for each split, run:
+```bash
+bash scripts/create_camelyon17_hg.sh \
+  /scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets/camelyon17-hg
+```
+
+This export uses Hugging Face's `train`, `validation`, and `test` splits and
+writes them locally as `train/`, `valid/`, and `test/`. It is also resumable:
+if interrupted, rerunning the same command continues from the next image
+recorded in each split's `labels.csv`.
+
 ### Notes by dataset
 - **PCam**: downloaded from official PatchCamelyon Google Drive files and MD5-verified.
   - You can also use `--pcam-source hf` to download the Hugging Face parquet
