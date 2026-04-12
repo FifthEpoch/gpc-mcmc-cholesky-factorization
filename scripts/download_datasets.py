@@ -13,6 +13,7 @@ Supports:
 from __future__ import annotations
 
 import argparse
+import csv
 import gzip
 import hashlib
 import shutil
@@ -259,6 +260,140 @@ def prepare_pcam_split_layout(target_dir: Path) -> None:
     )
 
 
+def find_first_h5_dataset(h5_group) -> object:
+    try:
+        import h5py
+    except ImportError as exc:
+        raise RuntimeError(
+            "h5py is not installed. Install dependencies first "
+            "(pip install -r requirements.txt)."
+        ) from exc
+
+    for key in h5_group.keys():
+        item = h5_group[key]
+        if isinstance(item, h5py.Dataset):
+            return item
+        if isinstance(item, h5py.Group):
+            nested = find_first_h5_dataset(item)
+            if nested is not None:
+                return nested
+    return None
+
+
+def read_csv_rows(path: Path) -> list[dict[str, str]]:
+    with path.open("r", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def save_image_array(image_array, output_path: Path) -> None:
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(
+            "Pillow is not installed. Install dependencies first "
+            "(pip install -r requirements.txt)."
+        ) from exc
+
+    image = Image.fromarray(image_array)
+    image.save(output_path)
+
+
+def export_pcam_images(target_dir: Path, image_format: str = "png") -> None:
+    try:
+        import h5py
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError(
+            "PCam image export requires h5py and numpy. Install dependencies first "
+            "(pip install -r requirements.txt)."
+        ) from exc
+
+    image_suffix = image_format.lower()
+    if image_suffix not in {"png", "jpg", "jpeg"}:
+        raise RuntimeError(
+            f"[PCam] Unsupported image format: {image_format}. Use png, jpg, or jpeg."
+        )
+
+    for split in ("train", "valid", "test"):
+        split_dir = target_dir / split
+        x_path = split_dir / "x.h5"
+        y_path = split_dir / "y.h5"
+        meta_path = split_dir / "meta.csv"
+
+        if not x_path.exists() or not y_path.exists():
+            raise RuntimeError(
+                "[PCam] Expected prepared split files before exporting images. "
+                f"Missing {x_path if not x_path.exists() else y_path}. "
+                "Run with --prepare-pcam first."
+            )
+
+        print(f"[PCam] Exporting {split} images from {x_path}")
+        images_dir = split_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        meta_rows = read_csv_rows(meta_path) if meta_path.exists() else []
+
+        with h5py.File(x_path, "r") as x_h5, h5py.File(y_path, "r") as y_h5:
+            x_dataset = find_first_h5_dataset(x_h5)
+            y_dataset = find_first_h5_dataset(y_h5)
+
+            if x_dataset is None or y_dataset is None:
+                raise RuntimeError(
+                    f"[PCam] Could not locate datasets inside {x_path} and {y_path}"
+                )
+
+            num_images = len(x_dataset)
+            labels = np.asarray(y_dataset).reshape(-1)
+            if len(labels) != num_images:
+                raise RuntimeError(
+                    f"[PCam] Split {split} has {num_images} images but {len(labels)} labels."
+                )
+            if meta_rows and len(meta_rows) != num_images:
+                raise RuntimeError(
+                    f"[PCam] Split {split} has {num_images} images but {len(meta_rows)} "
+                    "metadata rows."
+                )
+
+            width = max(6, len(str(num_images - 1)))
+            manifest_path = split_dir / "labels.csv"
+            with manifest_path.open("w", newline="") as manifest_file:
+                fieldnames = ["image", "label"]
+                if meta_rows:
+                    fieldnames.extend(meta_rows[0].keys())
+                writer = csv.DictWriter(manifest_file, fieldnames=fieldnames)
+                writer.writeheader()
+
+                saved = 0
+                skipped = 0
+                for idx in tqdm(range(num_images), desc=f"PCam {split} export"):
+                    image_name = f"{idx:0{width}d}.{image_suffix}"
+                    image_path = images_dir / image_name
+
+                    if image_path.exists():
+                        skipped += 1
+                    else:
+                        image_array = np.asarray(x_dataset[idx])
+                        if image_array.dtype != np.uint8:
+                            image_array = image_array.astype(np.uint8)
+                        save_image_array(image_array, image_path)
+                        saved += 1
+
+                    row = {
+                        "image": f"images/{image_name}",
+                        "label": int(labels[idx]),
+                    }
+                    if meta_rows:
+                        row.update(meta_rows[idx])
+                    writer.writerow(row)
+
+            total_count = saved + skipped
+            print(
+                f"[PCam] Exported split {split}: {total_count} images "
+                f"({saved} newly written, {skipped} already present). "
+                f"Manifest: {manifest_path}"
+            )
+
+
 def download_camelyon17_wilds(target_dir: Path) -> None:
     try:
         from wilds import get_dataset
@@ -346,6 +481,20 @@ def parse_args() -> argparse.Namespace:
             "decompress x/y .h5.gz files into each split folder and copy meta.csv."
         ),
     )
+    parser.add_argument(
+        "--export-pcam-images",
+        action="store_true",
+        help=(
+            "Export prepared PCam HDF5 splits into train/images, valid/images, and "
+            "test/images, and write labels.csv manifests."
+        ),
+    )
+    parser.add_argument(
+        "--pcam-image-format",
+        choices=["png", "jpg", "jpeg"],
+        default="png",
+        help="Image format to use when --export-pcam-images is enabled.",
+    )
     return parser.parse_args()
 
 
@@ -371,6 +520,8 @@ def main() -> None:
 
         if args.prepare_pcam:
             prepare_pcam_split_layout(pcam_dir)
+        if args.export_pcam_images:
+            export_pcam_images(pcam_dir, image_format=args.pcam_image_format)
     if "camelyon17" in selected:
         download_camelyon17_wilds(root / "camelyon17_wilds")
     if "embed" in selected:

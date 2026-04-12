@@ -130,6 +130,29 @@ That creates:
 - `datasets/pcam/valid/{x.h5,y.h5,meta.csv}`
 - `datasets/pcam/test/{x.h5,y.h5,meta.csv}`
 
+If you want actual image files under `train/images`, `valid/images`, and
+`test/images`, run:
+```bash
+python scripts/download_datasets.py \
+  --datasets pcam \
+  --root /scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets \
+  --pcam-source existing \
+  --prepare-pcam \
+  --export-pcam-images
+```
+
+That additionally creates:
+- `datasets/pcam/train/images/*.png`
+- `datasets/pcam/valid/images/*.png`
+- `datasets/pcam/test/images/*.png`
+- `datasets/pcam/{train,valid,test}/labels.csv`
+
+There is also a shell wrapper for the same operation:
+```bash
+bash scripts/export_pcam_images.sh \
+  /scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets
+```
+
 If you want PCam directly from Hugging Face instead of the original archives, run:
 ```bash
 python scripts/download_datasets.py \
@@ -144,6 +167,8 @@ python scripts/download_datasets.py \
     shards from `1aurent/PatchCamelyon`.
   - You can use `--pcam-source existing --prepare-pcam` to reorganize already
     downloaded `*.h5.gz` files into `train/`, `valid/`, and `test/`.
+  - You can use `--export-pcam-images` after preparation to materialize
+    individual image files plus a `labels.csv` manifest for each split.
 - **CAMELYON17-WILDS**: downloaded through `wilds.get_dataset(..., download=True)`.
 - **EMBED**: requires approval first. Submit access request:
   - [Access request form](https://forms.gle/6YVFKTz7ucEJKEWw8)
