@@ -6,5 +6,6 @@ matplotlib
 tqdm
 gdown
 huggingface_hub
+datasets
 h5py
 Pillow

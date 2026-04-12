@@ -153,6 +153,17 @@ bash scripts/export_pcam_images.sh \
   /scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets
 ```
 
+If you want a separate Hugging Face-based export that creates a new
+`pcam-hg/` directory with images named `1.png`, `2.png`, ... for each split,
+run:
+```bash
+bash scripts/create_pcam_hg.sh \
+  /scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets/pcam-hg
+```
+
+This export is resumable: if it gets interrupted, rerunning the same command
+continues from the next image recorded in each split's `labels.csv`.
+
 If you want PCam directly from Hugging Face instead of the original archives, run:
 ```bash
 python scripts/download_datasets.py \
