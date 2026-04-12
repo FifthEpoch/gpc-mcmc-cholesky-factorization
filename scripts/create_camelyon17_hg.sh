@@ -5,6 +5,10 @@
 #   <output>/test/images/1.png
 # plus labels.csv for each split.
 
+## bash scripts/create_camelyon17_hg.sh \
+##  /scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets/camelyon17-hg
+
+
 set -euo pipefail
 
 usage() {
