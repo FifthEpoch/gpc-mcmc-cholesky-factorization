@@ -86,6 +86,31 @@ def count_label_rows(labels_path: Path) -> int:
         return sum(1 for _ in reader)
 
 
+def count_contiguous_images(images_dir: Path) -> int:
+    count = 0
+    while (images_dir / f"{count + 1}.png").exists():
+        count += 1
+    return count
+
+
+def trim_labels_to_count(labels_path: Path, keep_rows: int) -> None:
+    if not labels_path.exists():
+        return
+
+    with labels_path.open("r", newline="") as labels_file:
+        rows = list(csv.reader(labels_file))
+
+    if not rows:
+        return
+
+    header = rows[0]
+    data_rows = rows[1 : keep_rows + 1]
+    with labels_path.open("w", newline="") as labels_file:
+        writer = csv.writer(labels_file)
+        writer.writerow(header)
+        writer.writerows(data_rows)
+
+
 split_map = {
     "train": "train",
     "validation": "valid",
@@ -115,19 +140,30 @@ for hf_split, output_split in split_map.items():
 
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    completed_rows = count_label_rows(labels_path)
+    label_rows = count_label_rows(labels_path)
+    image_rows = count_contiguous_images(images_dir)
+    if label_rows > image_rows:
+        print(
+            f"[Camelyon17-HG] {output_split}: labels.csv has {label_rows} rows but only "
+            f"{image_rows} contiguous images exist. Trimming labels.csv to {image_rows}.",
+            flush=True,
+        )
+        trim_labels_to_count(labels_path, image_rows)
+        label_rows = image_rows
+
+    completed_rows = min(label_rows, image_rows)
     start_idx = completed_rows + 1
     if completed_rows > 0:
         print(
             f"[Camelyon17-HG] {output_split}: resuming from image {start_idx} "
-            f"(already recorded {completed_rows} images in {labels_path})"
+            f"(labels={label_rows}, images={image_rows}, using {completed_rows})"
         )
     else:
         print(f"[Camelyon17-HG] {output_split}: starting fresh")
 
     saved = 0
     skipped = 0
-    labels_mode = "a" if labels_path.exists() and completed_rows > 0 else "w"
+    labels_mode = "a" if labels_path.exists() and label_rows > 0 else "w"
     with labels_path.open(labels_mode, newline="") as labels_file:
         writer = csv.DictWriter(labels_file, fieldnames=fieldnames)
         if labels_mode == "w":
