@@ -37,6 +37,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import train_test_split
+from tqdm.auto import tqdm
 
 
 # Allow direct script execution without package install.
@@ -387,6 +388,9 @@ def train_one_epoch(
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    epoch: int | None = None,
+    total_epochs: int | None = None,
+    dataset_name: str | None = None,
 ) -> dict[str, float | None]:
     model.train()
     total_loss = 0.0
@@ -394,7 +398,16 @@ def train_one_epoch(
     all_labels: list[np.ndarray] = []
     all_probs: list[np.ndarray] = []
 
-    for images, labels, _ in loader:
+    if epoch is not None and total_epochs is not None:
+        prefix = f"Epoch {epoch}/{total_epochs}"
+    else:
+        prefix = "Train"
+    if dataset_name:
+        prefix = f"[{dataset_name}] {prefix}"
+
+    progress = tqdm(loader, desc=prefix, leave=False)
+
+    for images, labels, _ in progress:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
@@ -410,6 +423,11 @@ def train_one_epoch(
         total_examples += batch_size
         all_labels.append(labels.detach().cpu().numpy())
         all_probs.append(probs.detach().cpu().numpy())
+
+        progress.set_postfix(
+            batch_loss=f"{loss.item():.4f}",
+            avg_loss=f"{total_loss / max(total_examples, 1):.4f}",
+        )
 
     labels_np = np.concatenate(all_labels)
     probs_np = np.concatenate(all_probs)
@@ -563,7 +581,16 @@ def train_dataset(
 
     for epoch in range(1, args.epochs + 1):
         epoch_start = time.perf_counter()
-        train_metrics = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        train_metrics = train_one_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            epoch=epoch,
+            total_epochs=args.epochs,
+            dataset_name=dataset_name,
+        )
         valid_metrics, _ = evaluate(model, valid_loader, criterion, device)
         epoch_time = time.perf_counter() - epoch_start
 
