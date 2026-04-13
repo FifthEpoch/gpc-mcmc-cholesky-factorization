@@ -9,3 +9,4 @@ huggingface_hub
 datasets
 h5py
 Pillow
+wandb

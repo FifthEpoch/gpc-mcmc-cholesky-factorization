@@ -206,3 +206,95 @@ python scripts/download_datasets.py \
   --root datasets \
   --embed-s3-uri s3://<approved-bucket-or-prefix>
 ```
+
+## Experiment 3: U-Net Binary Classification
+
+Experiment 3 adds a separate U-Net based classifier for pathology patches.
+The architecture lives in:
+
+- `src/models/unet_classifier.py`
+
+The training entry point lives in:
+
+- `experiments/exp3_unet_classifier.py`
+
+This expects the Hugging Face image exports:
+
+- `datasets/pcam-hg/{train,valid,test}`
+- `datasets/camelyon17-hg/{train,valid,test}`
+
+with each split containing `images/` and `labels.csv`.
+
+### How to run locally
+
+Make sure the conda env has PyTorch installed. On the cluster, that is the same
+env created with:
+
+```bash
+NETID=ab1234 bash scripts/setup_env.sh --with-datasets
+```
+
+Train on PCam:
+
+```bash
+python experiments/exp3_unet_classifier.py \
+  --dataset pcam \
+  --data-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/datasets \
+  --output-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/data/exp3_unet \
+  --epochs 5 \
+  --batch-size 32
+```
+
+Train on PCam with W&B logging:
+
+```bash
+export WANDB_API_KEY=<your_api_key>
+
+python experiments/exp3_unet_classifier.py \
+  --dataset pcam \
+  --data-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/datasets \
+  --output-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/data/exp3_unet \
+  --epochs 5 \
+  --batch-size 32 \
+  --wandb \
+  --wandb-project ML-Final_project \
+  --wandb-entity a-salt
+```
+
+Train on CAMELYON17:
+
+```bash
+python experiments/exp3_unet_classifier.py \
+  --dataset camelyon17 \
+  --data-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/datasets \
+  --output-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/data/exp3_unet \
+  --epochs 5 \
+  --batch-size 32
+```
+
+Outputs are saved under:
+
+- `data/exp3_unet/<dataset>/best_model.pt`
+- `data/exp3_unet/<dataset>/history.json`
+- `data/exp3_unet/<dataset>/test_metrics.json`
+- `data/exp3_unet/<dataset>/test_predictions.csv`
+
+### Run with SLURM
+
+Submit the provided GPU job script with:
+
+```bash
+sbatch --export=ALL,NETID=ab1234,DATASET=pcam,EPOCHS=5,BATCH_SIZE=32 \
+  scripts/exp3_unet_training.sbatch
+```
+
+To switch datasets, set `DATASET=camelyon17`.
+
+To enable W&B in SLURM, export the API key and set `USE_WANDB=1`:
+
+```bash
+export WANDB_API_KEY=<your_api_key>
+
+sbatch --export=ALL,NETID=ab1234,DATASET=pcam,EPOCHS=5,BATCH_SIZE=32,USE_WANDB=1,WANDB_PROJECT=ML-Final_project,WANDB_ENTITY=a-salt \
+  scripts/exp3_unet_training.sbatch
+```
