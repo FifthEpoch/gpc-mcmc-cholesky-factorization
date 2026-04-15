@@ -54,20 +54,27 @@ module purge
 module load anaconda3/2025.06
 source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
 
-if [ ! -d "${CONDA_ENV}" ]; then
-  echo "ERROR: Conda env not found at ${CONDA_ENV}" >&2
-  echo "Create it first on the login node:" >&2
-  echo "  NETID=${NETID} bash scripts/setup_env.sh" >&2
+# Avoid occasional conda hook issues under strict nounset shells on this cluster.
+export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
+set +u
+conda activate "${CONDA_ENV}"
+set -u
+
+if [ -z "${CONDA_PREFIX:-}" ] || [ ! -d "${CONDA_PREFIX}" ]; then
+  echo "ERROR: Failed to activate conda environment: ${CONDA_ENV}" >&2
+  echo "Pass the correct env with --export=ALL,CONDA_ENV=/scratch/${NETID}/conda-envs/<env>" >&2
   exit 1
 fi
+echo "Activated conda env: ${CONDA_PREFIX}"
 
-conda activate "${CONDA_ENV}"
-echo "Activated conda env: ${CONDA_ENV}"
+# Ensure the activated env's Python wins over module-level Anaconda paths.
+export PATH="${CONDA_PREFIX}/bin:${PATH}"
 
 unset PYTHONHOME
 unset PYTHONPATH
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
-PYTHON="${CONDA_ENV}/bin/python"
+PYTHON="${CONDA_PREFIX}/bin/python"
 if [ ! -x "${PYTHON}" ]; then
   echo "ERROR: Python not found at ${PYTHON}" >&2
   exit 1
@@ -79,7 +86,7 @@ echo "Using: ${PYTHON} ($(${PYTHON} --version 2>&1))"
   exit 1
 }
 
-export LD_LIBRARY_PATH="${CONDA_ENV}/lib:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 
 # Disable TabPFN telemetry on cluster jobs
 export TABPFN_DISABLE_TELEMETRY=1
