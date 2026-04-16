@@ -5,4 +5,8 @@ emcee
 matplotlib
 tqdm
 gdown
-pyGPs
+torch
+torchvision
+h5py
+tabpfn
+datasets

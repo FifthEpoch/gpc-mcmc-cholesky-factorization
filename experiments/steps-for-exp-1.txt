@@ -1,0 +1,9 @@
+Data setup: load PCam, CAMELYON17-WILDS, and EMBED; choose consistent N ≈ 2000 subsets; define train/validation/test splits.
+Model setup: define the same GP binary classification model on all datasets with the same kernel and the same non-centered parameterization.
+Exact baseline: build the dense kernel matrix, do exact dense Cholesky, and run the exact non-centered HMC baseline.
+Approximate method: build the Accelerated-RPCholesky factor and run the approximate sampler on the same posterior.
+Mixing diagnostics: measure integrated autocorrelation time, ESS, approximate independent/useful samples, and ESS/sec.
+Predictive evaluation: compute predictive log-likelihood, Brier score, ECE, AUROC, AUPRC, sensitivity, and false negative rate on held-out data.
+Uncertainty evaluation: summarize posterior uncertainty and calibration behavior, not just class predictions.
+Runtime evaluation: record factorization time, total sampling time, and end-to-end wall-clock time.
+Reporting: compare exact vs approximate on each dataset and show whether the approximate sampler matches predictive quality while being cheaper.
