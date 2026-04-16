@@ -1,6 +1,36 @@
-# my_cholesky_project
+# Scalable Gaussian Process Classification via RPCholesky
 
-Experiment code for benchmarking RPCholesky variants for scalable kernel matrix approximation.
+This project investigates whether **Randomly Pivoted Cholesky (RPCholesky)** low-rank
+approximations can make **Gaussian Process Classification (GPC)** practical for
+large-scale medical imaging tasks, while preserving the calibrated uncertainty
+estimates that GPs are valued for.
+
+Standard GPC requires inverting an \(N \times N\) kernel matrix, which is
+\(O(N^3)\) and infeasible for datasets with hundreds of thousands of samples.
+RPCholesky (Chen et al., 2023) provides a rank-\(k\) Nystr\"{o}m approximation
+that reduces this to \(O(Nk^2)\), but it is an open question whether the
+approximation degrades calibration or predictive performance on real clinical data.
+
+We benchmark RPCholesky-accelerated GPC against deterministic baselines on three
+histopathology / medical imaging datasets:
+
+- **PatchCamelyon (PCam)** -- 327K lymph node patches, binary metastasis detection
+- **CAMELYON17-WILDS** -- 455K patches from 5 hospitals, with distribution shift
+- **EMBED** -- mammography screening dataset (access-gated)
+
+## Experiments
+
+| # | Experiment | Question |
+|---|-----------|----------|
+| 0 | RPCholesky algorithm verification | Do Block and Accelerated RPCholesky match the approximation quality of Basic RPCholesky while being faster? |
+| 1 | MCMC-based GPC | Can RPCholesky + MCMC scale GPC to large N while maintaining calibration? |
+| 3 | Deterministic NN baseline | How does a simple MLP on frozen DenseNet-121 embeddings perform on predictive metrics and calibration? |
+| 4 | TabPFN baseline | How does a tabular foundation model (TabPFN) compare on the same frozen embeddings? |
+
+Experiments 3 and 4 serve as **baselines**: if the GP achieves comparable AUROC
+but better-calibrated probabilities (lower ECE, lower Brier score) and fewer
+false negatives, that supports the thesis that Bayesian uncertainty from
+RPCholesky-GPC is worth the extra compute.
 
 ## Environment setup (cluster)
 
@@ -116,8 +146,8 @@ python scripts/download_datasets.py --datasets embed --root datasets
 ```
 
 ### Notes by dataset
-- **PCam**: downloaded from official PatchCamelyon Google Drive files and MD5-verified.
-- **CAMELYON17-WILDS**: downloaded through `wilds.get_dataset(..., download=True)`.
+- **PCam**: downloaded from HuggingFace mirror ([1aurent/PatchCamelyon](https://huggingface.co/datasets/1aurent/PatchCamelyon)).
+- **CAMELYON17-WILDS**: downloaded from HuggingFace mirror ([wltjr1007/Camelyon17-WILDS](https://huggingface.co/datasets/wltjr1007/Camelyon17-WILDS)). The original CodaLab source used by the `wilds` library has been broken since June 2025.
 - **EMBED**: requires approval first. Submit access request:
   - [Access request form](https://forms.gle/6YVFKTz7ucEJKEWw8)
   - [Documentation](https://docs.hitilab.com/)

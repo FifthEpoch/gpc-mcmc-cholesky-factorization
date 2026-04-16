@@ -21,12 +21,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import gzip
 import os
 import sys
 from pathlib import Path
 
-import h5py
 import numpy as np
 import torch
 import torch.nn as nn
@@ -109,42 +107,33 @@ def extract(
     return all_feats
 
 
+HF_PCAM_REPO = "1aurent/PatchCamelyon"
+
+_PCAM_SPLIT_MAP = {"train": "train", "val": "valid", "test": "test"}
+
+
 def load_pcam_split(data_root: Path, split: str) -> tuple[np.ndarray, np.ndarray]:
-    """Load a PCam split from gzipped HDF5 files."""
-    split_map = {"train": "train", "val": "valid", "test": "test"}
-    s = split_map[split]
-    x_path = data_root / "pcam" / f"camelyonpatch_level_2_split_{s}_x.h5.gz"
-    y_path = data_root / "pcam" / f"camelyonpatch_level_2_split_{s}_y.h5.gz"
+    """Load a PCam split from the HuggingFace mirror (1aurent/PatchCamelyon)."""
+    from datasets import load_dataset
 
-    if not x_path.exists():
-        h5_path = x_path.with_suffix("")
-        if h5_path.exists():
-            x_path = h5_path
-            y_path = y_path.with_suffix("")
-        else:
-            raise FileNotFoundError(
-                f"PCam data not found at {x_path} or {h5_path}. "
-                "Run: python scripts/download_datasets.py --datasets pcam --root datasets"
-            )
+    hf_split = _PCAM_SPLIT_MAP.get(split, split)
+    cache_dir = str(data_root / "pcam" / "hf_cache")
+    print(f"[PCam] Loading {hf_split} split from HuggingFace ({HF_PCAM_REPO}) ...")
 
-    print(f"Loading {x_path} ...")
-    if str(x_path).endswith(".gz"):
-        with gzip.open(x_path, "rb") as f:
-            with h5py.File(f, "r") as hf:
-                images = hf["x"][:]
-    else:
-        with h5py.File(x_path, "r") as hf:
-            images = hf["x"][:]
+    ds = load_dataset(HF_PCAM_REPO, split=hf_split, cache_dir=cache_dir)
 
-    print(f"Loading {y_path} ...")
-    if str(y_path).endswith(".gz"):
-        with gzip.open(y_path, "rb") as f:
-            with h5py.File(f, "r") as hf:
-                labels = hf["y"][:].flatten()
-    else:
-        with h5py.File(y_path, "r") as hf:
-            labels = hf["y"][:].flatten()
+    images_list = []
+    labels_list = []
 
+    for row in tqdm(ds, desc=f"Loading PCam {split}", unit="img"):
+        img = row["image"]
+        if hasattr(img, "convert"):
+            img = img.convert("RGB")
+        images_list.append(np.array(img, dtype=np.uint8))
+        labels_list.append(int(row["label"]))
+
+    images = np.stack(images_list)
+    labels = np.array(labels_list, dtype=np.int64)
     return images, labels
 
 
