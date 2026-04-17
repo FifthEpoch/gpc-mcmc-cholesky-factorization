@@ -298,3 +298,83 @@ export WANDB_API_KEY=<your_api_key>
 sbatch --export=ALL,NETID=ab1234,DATASET=pcam,EPOCHS=5,BATCH_SIZE=32,USE_WANDB=1,WANDB_PROJECT=ML-Final_project,WANDB_ENTITY=a-salt \
   scripts/exp3_unet_training.sbatch
 ```
+
+## Phikon Embeddings
+
+If you want per-image foundation-model embeddings for the exported
+`pcam-hg` and `camelyon17-hg` splits, use:
+
+Make sure the active env has `torch`, `torchvision`, and `transformers`
+installed together. On the cluster, the same `--with-datasets` env plus
+`pip install -r requirements.txt` is enough.
+
+```bash
+python scripts/create_phikon_embeddings.py \
+  --dataset pcam \
+  --data-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/datasets \
+  --device cuda
+```
+
+If you want a smaller projected embedding size such as `512`, add:
+
+```bash
+python scripts/create_phikon_embeddings.py \
+  --dataset pcam \
+  --data-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/datasets \
+  --device cuda \
+  --project-dim 512
+```
+
+For CAMELYON17:
+
+```bash
+python scripts/create_phikon_embeddings.py \
+  --dataset camelyon17 \
+  --data-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/datasets \
+  --device cuda
+```
+
+To run both datasets:
+
+```bash
+python scripts/create_phikon_embeddings.py \
+  --dataset all \
+  --data-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/datasets \
+  --device cuda
+```
+
+This adds an `embeddings/` directory inside each split:
+
+- `train/images/`
+- `train/labels.csv`
+- `train/embeddings/embeddings.npy`
+- `train/embeddings/metadata.json`
+- `train/embeddings/progress.json`
+
+and likewise for `valid/` and `test/`.
+
+If `--project-dim 512` is used, each split also gets:
+
+- `train/embeddings/projected_512.npy`
+- `train/embeddings/projected_512_metadata.json`
+- `train/embeddings/projected_512_progress.json`
+
+and the dataset root gets:
+
+- `embedding_projection/pca_512.npz`
+- `embedding_projection/pca_512_metadata.json`
+
+Alignment rule:
+
+- row `i` of `train/embeddings/embeddings.npy`
+- row `i` of `train/labels.csv` excluding the header
+- the image path from that same `labels.csv` row
+
+all refer to the same example.
+
+The extractor is resumable. If interrupted, rerunning the same command resumes
+from the last saved row recorded in `progress.json`.
+
+The optional size reduction is a linear PCA projection fit on the train split
+and then reused for valid and test, so all splits remain in the same projected
+feature space.

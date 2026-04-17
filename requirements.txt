@@ -10,3 +10,4 @@ datasets
 h5py
 Pillow
 wandb
+transformers
