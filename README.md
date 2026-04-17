@@ -378,6 +378,12 @@ from the last saved row recorded in `progress.json`.
 By default it also prints one line per saved image or projected row. Use
 `--no-log-each-image` if you want quieter output.
 
+By default the script checkpoints every `100` rows. That means it flushes the
+current `.npy` file to disk and updates `progress.json` every 100 rows, which is
+faster than checkpointing every single row. If a job is interrupted, at most
+the last 100 rows may need to be recomputed. You can change this with
+`--checkpoint-every N`.
+
 The optional size reduction is a linear PCA projection fit on the train split
 and then reused for valid and test, so all splits remain in the same projected
 feature space.

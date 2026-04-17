@@ -121,6 +121,15 @@ def parse_args() -> argparse.Namespace:
         help="Batch size to use while fitting and applying the PCA projection.",
     )
     parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=100,
+        help=(
+            "Flush arrays and update progress.json every N rows. If interrupted, "
+            "at most N rows may need to be recomputed on resume."
+        ),
+    )
+    parser.add_argument(
         "--log-each-image",
         action="store_true",
         default=True,
@@ -437,6 +446,8 @@ def process_split(
     args: argparse.Namespace,
     device: torch.device,
 ) -> None:
+    if args.checkpoint_every <= 0:
+        raise ValueError("--checkpoint-every must be a positive integer.")
     records = load_split_records(split_dir)
     paths = embedding_paths(split_dir)
     paths["dir"].mkdir(parents=True, exist_ok=True)
@@ -503,15 +514,6 @@ def process_split(
             row_index = start + batch_offset
             row_number = row_index + 1
             embeddings[row_index] = row_embedding
-            embeddings.flush()
-            save_progress(
-                paths["progress"],
-                rows_completed=row_number,
-                rows_total=len(records),
-                dataset_name=dataset_name,
-                split_name=split_name,
-                model_name=args.model_name,
-            )
             log_row_progress(
                 dataset_name=dataset_name,
                 split_name=split_name,
@@ -523,6 +525,19 @@ def process_split(
             )
             progress.update(1)
             progress.set_postfix(saved=f"{row_number}/{len(records)}")
+            should_checkpoint = (
+                row_number % args.checkpoint_every == 0 or row_number == len(records)
+            )
+            if should_checkpoint:
+                embeddings.flush()
+                save_progress(
+                    paths["progress"],
+                    rows_completed=row_number,
+                    rows_total=len(records),
+                    dataset_name=dataset_name,
+                    split_name=split_name,
+                    model_name=args.model_name,
+                )
 
     progress.close()
     print(f"[{dataset_name}/{split_name}] saved embeddings to {paths['array']}")
@@ -630,6 +645,8 @@ def apply_projection_to_split(
     projection: dict[str, np.ndarray | int | str],
     args: argparse.Namespace,
 ) -> None:
+    if args.checkpoint_every <= 0:
+        raise ValueError("--checkpoint-every must be a positive integer.")
     records = load_split_records(split_dir)
     projected_dim = int(projection["projected_dim"])
     split_paths = embedding_paths(split_dir)
@@ -717,15 +734,6 @@ def apply_projection_to_split(
             row_index = start + batch_offset
             row_number = row_index + 1
             projected_embeddings[row_index] = row_embedding
-            projected_embeddings.flush()
-            save_progress(
-                output_paths["progress"],
-                rows_completed=row_number,
-                rows_total=int(base_embeddings.shape[0]),
-                dataset_name=dataset_name,
-                split_name=split_name,
-                model_name=f"{args.model_name}+{projection['method']}_{projected_dim}",
-            )
             log_row_progress(
                 dataset_name=dataset_name,
                 split_name=split_name,
@@ -737,6 +745,20 @@ def apply_projection_to_split(
             )
             progress.update(1)
             progress.set_postfix(saved=f"{row_number}/{int(base_embeddings.shape[0])}")
+            should_checkpoint = (
+                row_number % args.checkpoint_every == 0
+                or row_number == int(base_embeddings.shape[0])
+            )
+            if should_checkpoint:
+                projected_embeddings.flush()
+                save_progress(
+                    output_paths["progress"],
+                    rows_completed=row_number,
+                    rows_total=int(base_embeddings.shape[0]),
+                    dataset_name=dataset_name,
+                    split_name=split_name,
+                    model_name=f"{args.model_name}+{projection['method']}_{projected_dim}",
+                )
     progress.close()
 
     print(
