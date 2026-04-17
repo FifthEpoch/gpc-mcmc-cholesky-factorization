@@ -375,6 +375,9 @@ all refer to the same example.
 The extractor is resumable. If interrupted, rerunning the same command resumes
 from the last saved row recorded in `progress.json`.
 
+By default it also prints one line per saved image or projected row. Use
+`--no-log-each-image` if you want quieter output.
+
 The optional size reduction is a linear PCA projection fit on the train split
 and then reused for valid and test, so all splits remain in the same projected
 feature space.

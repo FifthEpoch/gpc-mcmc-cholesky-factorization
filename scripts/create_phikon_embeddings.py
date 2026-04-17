@@ -120,6 +120,18 @@ def parse_args() -> argparse.Namespace:
         default=2048,
         help="Batch size to use while fitting and applying the PCA projection.",
     )
+    parser.add_argument(
+        "--log-each-image",
+        action="store_true",
+        default=True,
+        help="Print one progress line per saved image or projected embedding row.",
+    )
+    parser.add_argument(
+        "--no-log-each-image",
+        action="store_false",
+        dest="log_each_image",
+        help="Disable per-image progress logging.",
+    )
     return parser.parse_args()
 
 
@@ -365,6 +377,24 @@ def save_progress(
     )
 
 
+def log_row_progress(
+    *,
+    dataset_name: str,
+    split_name: str,
+    row_number: int,
+    rows_total: int,
+    image_rel: str,
+    action: str,
+    enabled: bool,
+) -> None:
+    if not enabled:
+        return
+    print(
+        f"[{dataset_name}/{split_name}] {row_number}/{rows_total} "
+        f"{action}: {image_rel}"
+    )
+
+
 def load_batch_images(records: list[dict[str, Any]]) -> list[Image.Image]:
     images: list[Image.Image] = []
     for record in records:
@@ -467,20 +497,32 @@ def process_split(
             device=device,
             feature_pooling=args.feature_pooling,
         ).astype(get_embedding_dtype(args.dtype), copy=False)
-
-        embeddings[start:stop] = batch_embeddings
-        embeddings.flush()
-
-        save_progress(
-            paths["progress"],
-            rows_completed=stop,
-            rows_total=len(records),
-            dataset_name=dataset_name,
-            split_name=split_name,
-            model_name=args.model_name,
-        )
-        progress.update(stop - start)
-        progress.set_postfix(saved=f"{stop}/{len(records)}")
+        for batch_offset, (record, row_embedding) in enumerate(
+            zip(batch_records, batch_embeddings, strict=True)
+        ):
+            row_index = start + batch_offset
+            row_number = row_index + 1
+            embeddings[row_index] = row_embedding
+            embeddings.flush()
+            save_progress(
+                paths["progress"],
+                rows_completed=row_number,
+                rows_total=len(records),
+                dataset_name=dataset_name,
+                split_name=split_name,
+                model_name=args.model_name,
+            )
+            log_row_progress(
+                dataset_name=dataset_name,
+                split_name=split_name,
+                row_number=row_number,
+                rows_total=len(records),
+                image_rel=str(record["image_rel"]),
+                action="saved embedding",
+                enabled=args.log_each_image,
+            )
+            progress.update(1)
+            progress.set_postfix(saved=f"{row_number}/{len(records)}")
 
     progress.close()
     print(f"[{dataset_name}/{split_name}] saved embeddings to {paths['array']}")
@@ -588,6 +630,7 @@ def apply_projection_to_split(
     projection: dict[str, np.ndarray | int | str],
     args: argparse.Namespace,
 ) -> None:
+    records = load_split_records(split_dir)
     projected_dim = int(projection["projected_dim"])
     split_paths = embedding_paths(split_dir)
     if not split_paths["array"].exists():
@@ -596,6 +639,11 @@ def apply_projection_to_split(
         )
 
     base_embeddings = np.load(split_paths["array"], mmap_mode="r")
+    if len(records) != int(base_embeddings.shape[0]):
+        raise RuntimeError(
+            f"labels.csv rows ({len(records)}) do not match base embeddings rows "
+            f"({int(base_embeddings.shape[0])}) for {split_dir}."
+        )
     output_paths = projected_embedding_paths(split_dir, projected_dim)
     metadata_payload = {
         "dataset": dataset_name,
@@ -662,20 +710,33 @@ def apply_projection_to_split(
         )
         batch = np.asarray(base_embeddings[start:stop], dtype=np.float32)
         projected_batch = (batch - mean) @ components.T
-        projected_embeddings[start:stop] = projected_batch.astype(
+        projected_batch = projected_batch.astype(
             get_embedding_dtype(args.dtype), copy=False
         )
-        projected_embeddings.flush()
-        save_progress(
-            output_paths["progress"],
-            rows_completed=stop,
-            rows_total=int(base_embeddings.shape[0]),
-            dataset_name=dataset_name,
-            split_name=split_name,
-            model_name=f"{args.model_name}+{projection['method']}_{projected_dim}",
-        )
-        progress.update(stop - start)
-        progress.set_postfix(saved=f"{stop}/{int(base_embeddings.shape[0])}")
+        for batch_offset, row_embedding in enumerate(projected_batch):
+            row_index = start + batch_offset
+            row_number = row_index + 1
+            projected_embeddings[row_index] = row_embedding
+            projected_embeddings.flush()
+            save_progress(
+                output_paths["progress"],
+                rows_completed=row_number,
+                rows_total=int(base_embeddings.shape[0]),
+                dataset_name=dataset_name,
+                split_name=split_name,
+                model_name=f"{args.model_name}+{projection['method']}_{projected_dim}",
+            )
+            log_row_progress(
+                dataset_name=dataset_name,
+                split_name=split_name,
+                row_number=row_number,
+                rows_total=int(base_embeddings.shape[0]),
+                image_rel=str(records[row_index]["image_rel"]),
+                action=f"saved projected_{projected_dim}",
+                enabled=args.log_each_image,
+            )
+            progress.update(1)
+            progress.set_postfix(saved=f"{row_number}/{int(base_embeddings.shape[0])}")
     progress.close()
 
     print(
