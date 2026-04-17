@@ -299,6 +299,51 @@ def initial_completed_rows(
     return max(0, min(completed_rows, rows_total))
 
 
+def inspect_existing_base_embeddings(
+    split_dir: Path, args: argparse.Namespace
+) -> dict[str, Any]:
+    records = load_split_records(split_dir)
+    rows_total = len(records)
+    paths = embedding_paths(split_dir)
+
+    status: dict[str, Any] = {
+        "rows_total": rows_total,
+        "ready": False,
+        "embedding_dim": None,
+        "paths": paths,
+    }
+    if args.overwrite:
+        return status
+    if not all(paths[key].exists() for key in ["array", "metadata", "progress"]):
+        return status
+
+    metadata = load_json(paths["metadata"])
+    completed_rows = initial_completed_rows(
+        paths["progress"], rows_total=rows_total, overwrite=False
+    )
+    try:
+        array = np.load(paths["array"], mmap_mode="r")
+    except Exception:
+        return status
+
+    metadata_matches = (
+        metadata.get("model_name") == args.model_name
+        and metadata.get("feature_pooling") == args.feature_pooling
+        and metadata.get("dtype") == args.dtype
+        and int(metadata.get("rows_total", -1)) == rows_total
+    )
+    shape_matches = (
+        getattr(array, "ndim", 0) == 2
+        and int(array.shape[0]) == rows_total
+        and int(array.shape[1]) > 0
+    )
+    ready = metadata_matches and shape_matches and completed_rows >= rows_total
+
+    status["ready"] = ready
+    status["embedding_dim"] = int(array.shape[1]) if shape_matches else None
+    return status
+
+
 def save_progress(
     progress_path: Path,
     *,
@@ -642,11 +687,38 @@ def apply_projection_to_split(
 def main() -> None:
     args = parse_args()
     device = resolve_device(args.device)
+    base_statuses: dict[str, dict[str, dict[str, Any]]] = {}
+    selected = selected_datasets(args.dataset)
+    need_base_embeddings = False
+    known_embedding_dims: list[int] = []
 
-    processor, model = load_processor_and_model(args.model_name, args.cache_dir)
-    model = model.to(device)
-    model.eval()
-    embedding_dim = int(model.config.hidden_size)
+    for dataset_name in selected:
+        dataset_root = args.data_root / dataset_root_name(dataset_name)
+        if not dataset_root.exists():
+            raise FileNotFoundError(f"Expected dataset directory at {dataset_root}")
+        base_statuses[dataset_name] = {}
+        for split_name in args.splits:
+            status = inspect_existing_base_embeddings(dataset_root / split_name, args)
+            base_statuses[dataset_name][split_name] = status
+            if status["ready"]:
+                known_embedding_dims.append(int(status["embedding_dim"]))
+            else:
+                need_base_embeddings = True
+
+    processor = None
+    model = None
+    if len(set(known_embedding_dims)) > 1:
+        raise RuntimeError(
+            f"Found inconsistent existing embedding dimensions: {sorted(set(known_embedding_dims))}"
+        )
+    embedding_dim = known_embedding_dims[0] if known_embedding_dims else None
+    if need_base_embeddings:
+        processor, model = load_processor_and_model(args.model_name, args.cache_dir)
+        model = model.to(device)
+        model.eval()
+        embedding_dim = int(model.config.hidden_size)
+    elif embedding_dim is None:
+        raise RuntimeError("Could not determine the existing embedding dimension.")
 
     print("==============================================================================")
     print("Phikon Embedding Extraction")
@@ -660,25 +732,31 @@ def main() -> None:
         f"{args.project_dim if args.project_dim is not None else 'disabled'}"
     )
     print(f"Device          : {device}")
+    print(f"Reuse existing  : {'yes' if not need_base_embeddings else 'partial/no'}")
     print("==============================================================================")
 
-    for dataset_name in selected_datasets(args.dataset):
+    for dataset_name in selected:
         dataset_root = args.data_root / dataset_root_name(dataset_name)
-        if not dataset_root.exists():
-            raise FileNotFoundError(f"Expected dataset directory at {dataset_root}")
         print("")
         print(f"[{dataset_name}] dataset root: {dataset_root}")
         for split_name in args.splits:
-            process_split(
-                dataset_name=dataset_name,
-                split_name=split_name,
-                split_dir=dataset_root / split_name,
-                processor=processor,
-                model=model,
-                embedding_dim=embedding_dim,
-                args=args,
-                device=device,
-            )
+            status = base_statuses[dataset_name][split_name]
+            if status["ready"]:
+                print(
+                    f"[{dataset_name}/{split_name}] reusing existing embeddings at "
+                    f"{status['paths']['array']}"
+                )
+            else:
+                process_split(
+                    dataset_name=dataset_name,
+                    split_name=split_name,
+                    split_dir=dataset_root / split_name,
+                    processor=processor,
+                    model=model,
+                    embedding_dim=embedding_dim,
+                    args=args,
+                    device=device,
+                )
         if args.project_dim is not None:
             projection = fit_or_load_projection(
                 dataset_name=dataset_name,
