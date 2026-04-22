@@ -24,9 +24,11 @@ import argparse
 import csv
 import json
 from pathlib import Path
+import sys
 from typing import Any
 
 import numpy as np
+from tqdm.auto import tqdm
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -122,14 +124,35 @@ def label_dtype(dtype_name: str) -> np.dtype:
     }[dtype_name]
 
 
-def load_labels(split_dir: Path, *, label_column: str, dtype_name: str) -> np.ndarray:
+def count_label_rows(labels_path: Path) -> int:
+    with labels_path.open("r", newline="") as handle:
+        reader = csv.DictReader(handle)
+        return sum(1 for _ in reader)
+
+
+def load_labels(
+    split_dir: Path,
+    *,
+    dataset_name: str,
+    split_name: str,
+    label_column: str,
+    dtype_name: str,
+) -> np.ndarray:
     labels_path = split_dir / "labels.csv"
     if not labels_path.exists():
         raise FileNotFoundError(f"Expected labels.csv at {labels_path}")
 
+    total_rows = count_label_rows(labels_path)
     labels: list[int | float] = []
     repaired_paths = 0
     trimmed_at_row: int | None = None
+    progress = tqdm(
+        total=total_rows,
+        desc=f"{dataset_name}:{split_name}:labels",
+        unit="row",
+        file=sys.stdout,
+        dynamic_ncols=True,
+    )
     with labels_path.open("r", newline="") as handle:
         reader = csv.DictReader(handle)
         fieldnames = reader.fieldnames or []
@@ -157,6 +180,9 @@ def load_labels(split_dir: Path, *, label_column: str, dtype_name: str) -> np.nd
                     )
                     break
             labels.append(maybe_parse_label(row[label_column], dtype_name))
+            progress.update(1)
+            progress.set_postfix(saved=f"{len(labels)}/{total_rows}")
+    progress.close()
 
     if not labels:
         raise RuntimeError(f"No rows found in {labels_path}")
@@ -189,6 +215,8 @@ def write_split_labels(
 
     labels = load_labels(
         split_dir,
+        dataset_name=dataset_name,
+        split_name=split_name,
         label_column=args.label_column,
         dtype_name=args.dtype,
     )
