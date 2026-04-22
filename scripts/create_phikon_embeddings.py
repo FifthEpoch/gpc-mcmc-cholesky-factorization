@@ -25,6 +25,7 @@ import csv
 import json
 import math
 from pathlib import Path
+import sys
 from typing import Any
 
 import numpy as np
@@ -188,6 +189,8 @@ def load_split_records(split_dir: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"Expected labels.csv at {labels_path}")
 
     records: list[dict[str, Any]] = []
+    repaired_paths = 0
+    trimmed_at_row: int | None = None
     with labels_path.open("r", newline="") as handle:
         reader = csv.DictReader(handle)
         if "image" not in (reader.fieldnames or []):
@@ -196,9 +199,21 @@ def load_split_records(split_dir: Path) -> list[dict[str, Any]]:
             image_rel = row["image"]
             image_path = split_dir / image_rel
             if not image_path.exists():
-                raise FileNotFoundError(
-                    f"Expected image for row {row_index + 1} at {image_path}"
-                )
+                fallback_rel = f"images/{row_index + 1}.png"
+                fallback_path = split_dir / fallback_rel
+                if fallback_path.exists():
+                    image_rel = fallback_rel
+                    image_path = fallback_path
+                    repaired_paths += 1
+                else:
+                    trimmed_at_row = row_index + 1
+                    print(
+                        f"[load_split_records] WARNING: missing image for row "
+                        f"{trimmed_at_row} at {image_path}; using only the first "
+                        f"{row_index} contiguous rows from {labels_path}",
+                        flush=True,
+                    )
+                    break
             records.append(
                 {
                     "row_index": row_index,
@@ -209,6 +224,18 @@ def load_split_records(split_dir: Path) -> list[dict[str, Any]]:
 
     if not records:
         raise RuntimeError(f"No rows found in {labels_path}")
+    if repaired_paths > 0:
+        print(
+            f"[load_split_records] WARNING: repaired {repaired_paths} image path(s) "
+            f"in {labels_path} using contiguous images/<row>.png fallback",
+            flush=True,
+        )
+    if trimmed_at_row is not None:
+        print(
+            f"[load_split_records] NOTICE: embeddings will align to the first "
+            f"{len(records)} usable rows of {labels_path}",
+            flush=True,
+        )
     return records
 
 
@@ -557,6 +584,10 @@ def fit_or_load_projection(
     if paths["matrix"].exists() and paths["metadata"].exists() and not args.overwrite:
         metadata = load_json(paths["metadata"])
         projection = np.load(paths["matrix"])
+        print(
+            f"[{dataset_name}] reusing existing PCA projection "
+            f"{metadata['source_dim']} -> {metadata['projected_dim']} from {paths['matrix']}"
+        )
         return {
             "method": metadata["method"],
             "fitted_on_split": metadata["fitted_on_split"],
@@ -596,6 +627,8 @@ def fit_or_load_projection(
         total=total_rows,
         desc=f"{dataset_name}:fit-pca",
         unit="row",
+        file=sys.stdout,
+        dynamic_ncols=True,
     )
     start = 0
     while start < total_rows:
@@ -718,8 +751,10 @@ def apply_projection_to_split(
     progress = tqdm(
         total=int(base_embeddings.shape[0]),
         initial=completed_rows,
-        desc=f"{dataset_name}:{split_name}:project",
+        desc=f"{dataset_name}:{split_name}:project_{projected_dim}",
         unit="row",
+        file=sys.stdout,
+        dynamic_ncols=True,
     )
     for start in range(completed_rows, int(base_embeddings.shape[0]), args.projection_batch_size):
         stop = min(

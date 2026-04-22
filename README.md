@@ -387,3 +387,24 @@ the last 100 rows may need to be recomputed. You can change this with
 The optional size reduction is a linear PCA projection fit on the train split
 and then reused for valid and test, so all splits remain in the same projected
 feature space.
+
+## Label Arrays
+
+If you want an aligned label array for each exported split, use:
+
+```bash
+python scripts/create_label_arrays.py \
+  --dataset camelyon17 \
+  --data-root /scratch/ab1234/gpc-mcmc-cholesky-factorization/datasets
+```
+
+This adds to each split:
+
+- `train/embeddings/y_embeddings.npy`
+- `train/embeddings/y_embeddings_metadata.json`
+
+and likewise for `valid/` and `test/`.
+
+`y_embeddings.npy` has shape `(n, 1)`, where row `i` matches row `i` of
+`labels.csv` excluding the header and therefore the image path from that same
+row.
