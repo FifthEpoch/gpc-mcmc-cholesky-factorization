@@ -535,8 +535,14 @@ def process_split(
             device=device,
             feature_pooling=args.feature_pooling,
         ).astype(get_embedding_dtype(args.dtype), copy=False)
+        if len(batch_records) != len(batch_embeddings):
+            raise RuntimeError(
+                f"Expected {len(batch_records)} embeddings for "
+                f"{dataset_name}/{split_name} rows {start + 1}-{stop}, got "
+                f"{len(batch_embeddings)}."
+            )
         for batch_offset, (record, row_embedding) in enumerate(
-            zip(batch_records, batch_embeddings, strict=True)
+            zip(batch_records, batch_embeddings)
         ):
             row_index = start + batch_offset
             row_number = row_index + 1
