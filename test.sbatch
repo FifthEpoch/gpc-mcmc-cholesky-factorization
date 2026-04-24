@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=exp3_test
+#SBATCH --account=csci_ga_2565-2026sp
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
