@@ -9,12 +9,13 @@ Model:
 
 Outputs:
 - data/exp1_gpytorch_svgp_posterior.png
-- data/exp1_gpytorch_svgp_results.npy
+- data/exp1_gpytorch_svgp_results.npz
 """
 
 from __future__ import annotations
 
 import os
+import sys
 import time
 import importlib
 
@@ -23,6 +24,13 @@ import numpy as np
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from predictive_metrics import (
+    evaluate_binary_probabilistic_predictions,
+    print_metric_table,
+)
 
 
 def make_fake_blobs(seed: int = 42):
@@ -65,13 +73,16 @@ def main() -> None:
 
     # Data setup (same task as exp1_pygp_approx_gpc)
     X_np, y_np = make_fake_blobs(seed=42)
+    X_test_np, y_test = make_fake_blobs(seed=123)
     X = torch.tensor(X_np, dtype=torch.float32)
     y = torch.tensor(y_np, dtype=torch.float32)
+    X_test = torch.tensor(X_test_np, dtype=torch.float32)
 
     # Optional GPU acceleration if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     X = X.to(device)
     y = y.to(device)
+    X_test = X_test.to(device)
 
     class SVGPBinaryClassifier(gpytorch.models.ApproximateGP):
         def __init__(self, inducing_points):
@@ -181,6 +192,21 @@ def main() -> None:
         np.mean(y_np * np.log(p_train + 1e-10) + (1 - y_np) * np.log(1 - p_train + 1e-10))
     )
     train_brier = float(np.mean((p_train - y_np) ** 2))
+
+    # Labeled test-set predictions and evaluation
+    q_test, p_test_dist, mu_test_t, var_test_t, prob_test_t = predict_binary(X_test)
+    mu_test = mu_test_t.detach().cpu().numpy()
+    var_test = var_test_t.detach().cpu().numpy()
+    p_test = prob_test_t.detach().cpu().numpy()
+
+    test_metrics = evaluate_binary_probabilistic_predictions(
+        y_true=y_test,
+        p_pred=p_test,
+        threshold=0.5,
+        n_bins=15,
+    )
+    print_metric_table(test_metrics, title="GPyTorch SVGP test metrics")
+
     # Plot 1: latent predictive mean
     plt.figure(figsize=(7, 6))
     cf = plt.contourf(
@@ -239,28 +265,29 @@ def main() -> None:
     plt.tight_layout()
     plt.savefig(os.path.join(data_dir, "exp1_gpytorch_svgp_prob.png"), dpi=170)
     plt.close()
-    np.save(
-        os.path.join(data_dir, "exp1_gpytorch_svgp_results.npy"),
-        {
-            "num_inducing": num_inducing,
-            "batch_size": batch_size,
-            "num_epochs": num_epochs,
-            "learning_rate": learning_rate,
-            "train_time": float(train_time),
-            "final_loss": float(epoch_losses[-1]) if epoch_losses else float("nan"),
-            "train_accuracy": accuracy,
-            "train_loglik": train_loglik,
-            "train_brier": train_brier,
-            "device": str(device),
-            "latent_mean_train": mu_train,
-            "latent_var_train": var_train,
-            "prob_train": p_train,
-            "grid_shape": xx.shape,
-            "latent_mean_grid": mu_grid,
-            "latent_var_grid": var_grid,
-            "prob_grid": p_grid,
-        },
-        allow_pickle=True,
+    np.savez(
+        os.path.join(data_dir, "exp1_gpytorch_svgp_results.npz"),
+        num_inducing=num_inducing,
+        batch_size=batch_size,
+        num_epochs=num_epochs,
+        learning_rate=learning_rate,
+        train_time=float(train_time),
+        final_loss=float(epoch_losses[-1]) if epoch_losses else float("nan"),
+        train_accuracy=accuracy,
+        train_loglik=train_loglik,
+        train_brier=train_brier,
+        device=str(device),
+        latent_mean_train=mu_train,
+        latent_var_train=var_train,
+        prob_train=p_train,
+        latent_mean_test=mu_test,
+        latent_var_test=var_test,
+        prob_test=p_test,
+        y_test=y_test,
+        grid_shape=xx.shape,
+        latent_mean_grid=mu_grid,
+        latent_var_grid=var_grid,
+        prob_grid=p_grid,
     )
     print(f"Training done in {train_time:.2f}s on {device}.")
     print(f"Train accuracy: {accuracy * 100.0:.2f}%")
@@ -270,7 +297,7 @@ def main() -> None:
     print("- data/exp1_gpytorch_svgp_latent_mean.png")
     print("- data/exp1_gpytorch_svgp_latent_std.png")
     print("- data/exp1_gpytorch_svgp_prob.png")
-    print("- data/exp1_gpytorch_svgp_results.npy")
+    print("- data/exp1_gpytorch_svgp_results.npz")
 
 
 if __name__ == "__main__":

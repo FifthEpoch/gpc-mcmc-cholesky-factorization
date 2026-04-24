@@ -13,6 +13,7 @@ and plots them in a single figure with six panels.
 from __future__ import annotations
 
 import os
+import sys
 import time
 from typing import Any
 
@@ -21,6 +22,13 @@ import numpy as np
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from predictive_metrics import (
+    evaluate_binary_probabilistic_predictions,
+    print_metric_table,
+)
 
 
 def make_fake_blobs(seed: int = 42):
@@ -160,6 +168,7 @@ def main() -> None:
     pygp = _import_pygp()
 
     X, y = make_fake_blobs(seed=42)
+    X_test_labeled, y_test = make_fake_blobs(seed=123)
 
     x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
     y_min, y_max = X[:, 1].min() - 0.5, X[:, 1].max() + 0.5
@@ -175,7 +184,18 @@ def main() -> None:
     print("Running pyGPs methods:", ", ".join(methods))
     for method in methods:
         results[method] = fit_predict_method(pygp, X, y, X_grid, method)
+        test_results = fit_predict_method(pygp, X, y, X_test_labeled, method)
+        results[method]["prob_test"] = test_results["prob"]
+        results[method]["latent_mean_test"] = test_results["latent_mean"]
+        results[method]["latent_var_test"] = test_results["latent_var"]
+        results[method]["test_metrics"] = evaluate_binary_probabilistic_predictions(
+            y_true=y_test,
+            p_pred=results[method]["prob_test"],
+            threshold=0.5,
+            n_bins=15,
+        )
         print(f"  {method}: fit+predict={results[method]['fit_predict_time']:.3f}s")
+        print_metric_table(results[method]["test_metrics"], title=f"pyGPs {method} test metrics")
 
     # ------------------------------------------------------------
     # Single figure with 6 panels: 3 rows (latent mean, latent std, prob) x 2 columns (LA, EP)
@@ -230,6 +250,8 @@ def main() -> None:
         {
             "methods": methods,
             "fit_predict_time": {m: results[m]["fit_predict_time"] for m in methods},
+            "results": results,
+            "y_test": y_test,
         },
         allow_pickle=True,
     )

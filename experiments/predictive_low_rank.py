@@ -23,9 +23,16 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_PATH = os.path.join(PROJECT_ROOT, "src")
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from my_cholesky.arpcholesky import arpcholesky
 from my_cholesky.kernels import GaussianKernel_mtx
+from predictive_metrics import (
+    evaluate_binary_probabilistic_predictions,
+    print_metric_table,
+    summarize_predictive_distribution,
+)
 
 
 def make_fake_blobs(seed=42, n_per_class=100):
@@ -261,19 +268,24 @@ def main():
     X_train, y_train = make_fake_blobs(seed=42, n_per_class=1000)
     n_train = X_train.shape[0]
 
+    X_test_labeled, y_test = make_fake_blobs(seed=123, n_per_class=500)
+    n_test_labeled = X_test_labeled.shape[0]
+
     x1 = np.linspace(-3, 3, 20)
     x2 = np.linspace(-3, 3, 20)
     X1, X2 = np.meshgrid(x1, x2)
-    X_test = np.column_stack([X1.ravel(), X2.ravel()])
-    n_test = X_test.shape[0]
+    X_test_plot = np.column_stack([X1.ravel(), X2.ravel()])
+    n_test_plot = X_test_plot.shape[0]
 
     # -------------------------
     # Kernel matrices
     # -------------------------
     bandwidth = 1.0
     K_train = GaussianKernel_mtx(X_train, X_train, bandwidth=bandwidth)
-    K_test_train = GaussianKernel_mtx(X_test, X_train, bandwidth=bandwidth)
-    K_test_test = GaussianKernel_mtx(X_test, X_test, bandwidth=bandwidth)
+    K_test_train_plot = GaussianKernel_mtx(X_test_plot, X_train, bandwidth=bandwidth)
+    K_test_test_plot = GaussianKernel_mtx(X_test_plot, X_test_plot, bandwidth=bandwidth)
+    K_test_train_eval = GaussianKernel_mtx(X_test_labeled, X_train, bandwidth=bandwidth)
+    K_test_test_eval = GaussianKernel_mtx(X_test_labeled, X_test_labeled, bandwidth=bandwidth)
 
     # -------------------------
     # Low-rank factor for K_XX
@@ -315,29 +327,68 @@ def main():
     # -------------------------
     # Predictive sampling
     # -------------------------
-    pred = sample_predictive_probabilities_lowrank_nugget(
+    pred_test = sample_predictive_probabilities_lowrank_nugget(
         F=F,
-        K_test_train=K_test_train,
-        K_test_test=K_test_test,
+        K_test_train=K_test_train_eval,
+        K_test_test=K_test_test_eval,
         f_train_samples=f_train_samples,
         nugget=nugget,
-        test_rank=min(120, n_test),
+        test_rank=min(120, n_test_labeled),
         test_jitter=1e-8,
         n_conditional_draws=10,
         seed=999,
     )
 
-    p_test_samples = pred["p_samples"]
-    latent_test_samples = pred["latent_samples"]
+    p_test_samples = pred_test["p_samples"]
+    latent_test_samples = pred_test["latent_samples"]
 
-    predictive_prob = np.mean(p_test_samples, axis=0)
-    predictive_std = np.std(p_test_samples, axis=0)
+    pred_summary = summarize_predictive_distribution(
+        p_samples=p_test_samples,
+        latent_samples=latent_test_samples,
+    )
 
-    predictive_latent_mean = np.mean(latent_test_samples, axis=0)
-    predictive_latent_std = np.std(latent_test_samples, axis=0)
+    predictive_prob = pred_summary["prob_mean"]
+    predictive_var = pred_summary["prob_variance"]
+    predictive_std = pred_summary["prob_std"]
 
-    prob_grid = predictive_prob.reshape(X1.shape)
-    std_grid = predictive_std.reshape(X1.shape)
+    predictive_latent_mean = pred_summary["latent_mean"]
+    predictive_latent_var = pred_summary["latent_variance"]
+    predictive_latent_std = pred_summary["latent_std"]
+
+    prob_q05 = pred_summary["prob_q05"]
+    prob_q50 = pred_summary["prob_q50"]
+    prob_q95 = pred_summary["prob_q95"]
+
+    latent_q05 = pred_summary["latent_q05"]
+    latent_q50 = pred_summary["latent_q50"]
+    latent_q95 = pred_summary["latent_q95"]
+
+    test_metrics = evaluate_binary_probabilistic_predictions(
+        y_true=y_test,
+        p_pred=predictive_prob,
+        threshold=0.5,
+        n_bins=15,
+    )
+    print_metric_table(test_metrics, title="Low-rank HMC GP test metrics")
+
+    pred_plot = sample_predictive_probabilities_lowrank_nugget(
+        F=F,
+        K_test_train=K_test_train_plot,
+        K_test_test=K_test_test_plot,
+        f_train_samples=f_train_samples,
+        nugget=nugget,
+        test_rank=min(120, n_test_plot),
+        test_jitter=1e-8,
+        n_conditional_draws=10,
+        seed=999,
+    )
+
+    p_plot_samples = pred_plot["p_samples"]
+    predictive_prob_plot = np.mean(p_plot_samples, axis=0)
+    predictive_std_plot = np.std(p_plot_samples, axis=0)
+
+    prob_grid = predictive_prob_plot.reshape(X1.shape)
+    std_grid = predictive_std_plot.reshape(X1.shape)
 
     # -------------------------
     # Plot
@@ -382,19 +433,31 @@ def main():
 
     np.savez(
         results_path,
-        X_test=X_test,
-        predictive_prob=predictive_prob,
-        predictive_std=predictive_std,
-        predictive_latent_mean=predictive_latent_mean,
-        predictive_latent_std=predictive_latent_std,
+        X_test_plot=X_test_plot,
+        X_test_labeled=X_test_labeled,
+        y_test=y_test,
+        predictive_prob_plot=predictive_prob_plot,
+        predictive_std_plot=predictive_std_plot,
+        predictive_prob_test=predictive_prob,
+        predictive_var_test=predictive_var,
+        predictive_std_test=predictive_std,
+        predictive_latent_mean_test=predictive_latent_mean,
+        predictive_latent_var_test=predictive_latent_var,
+        prob_q05=prob_q05,
+        prob_q50=prob_q50,
+        prob_q95=prob_q95,
+        latent_q05=latent_q05,
+        latent_q50=latent_q50,
+        latent_q95=latent_q95,
         X_train=X_train,
         y_train=y_train,
         accept_rate=hmc_stats["accept_rate"],
         tau_nu=tau_nu,
         tau_logp=tau_logp,
         train_rank=train_rank,
-        test_rank=min(120, n_test),
+        test_rank=min(120, n_test_plot),
         nugget=nugget,
+        **test_metrics,
     )
 
     print("Low-rank HMC predictive computation completed.")

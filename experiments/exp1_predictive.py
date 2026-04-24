@@ -25,11 +25,17 @@ from scipy.special import expit
 # Allow direct script execution without package install.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_PATH = os.path.join(PROJECT_ROOT, "src")
-
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from my_cholesky.kernels import GaussianKernel_mtx
+from predictive_metrics import (
+    evaluate_binary_probabilistic_predictions,
+    print_metric_table,
+    summarize_predictive_distribution,
+)
 
 
 def compute_tau_emcee(chain):
@@ -265,6 +271,7 @@ def sample_predictive_probabilities(
     mean_test = K_test_train @ K_inv_f
 
     p_samples = []
+    latent_samples = []
 
     for j in range(n_draws):
         m_j = mean_test[:, j]
@@ -277,9 +284,10 @@ def sample_predictive_probabilities(
             # so Cov(f_*) = L_S L_S^T = S.
             f_star = m_j + cond_chol @ z
 
+            latent_samples.append(f_star)
             p_samples.append(expit(f_star))
 
-    return np.asarray(p_samples)
+    return np.asarray(p_samples), np.asarray(latent_samples)
 
 
 def main():
@@ -292,12 +300,16 @@ def main():
     X_train, y_train = make_fake_blobs(seed=42, n_per_class=1000)
     n_train = X_train.shape[0]
 
-    # Test grid
+    # Labeled test set for evaluation
+    X_test_labeled, y_test = make_fake_blobs(seed=123, n_per_class=500)
+    n_test_labeled = X_test_labeled.shape[0]
+
+    # Plotting grid for posteriors
     x1 = np.linspace(-3, 3, 20)
     x2 = np.linspace(-3, 3, 20)
     X1, X2 = np.meshgrid(x1, x2)
-    X_test = np.column_stack([X1.ravel(), X2.ravel()])
-    n_test = X_test.shape[0]
+    X_test_plot = np.column_stack([X1.ravel(), X2.ravel()])
+    n_test_plot = X_test_plot.shape[0]
 
     # Kernel matrices
     bandwidth = 1.0
@@ -307,15 +319,25 @@ def main():
         + 1e-6 * np.eye(n_train)
     )
 
-    K_test_train = GaussianKernel_mtx(
-        X_test,
+    K_test_train_plot = GaussianKernel_mtx(
+        X_test_plot,
         X_train,
         bandwidth=bandwidth,
     )
+    K_test_test_plot = GaussianKernel_mtx(
+        X_test_plot,
+        X_test_plot,
+        bandwidth=bandwidth,
+    )
 
-    K_test_test = GaussianKernel_mtx(
-        X_test,
-        X_test,
+    K_test_train_eval = GaussianKernel_mtx(
+        X_test_labeled,
+        X_train,
+        bandwidth=bandwidth,
+    )
+    K_test_test_eval = GaussianKernel_mtx(
+        X_test_labeled,
+        X_test_labeled,
         bandwidth=bandwidth,
     )
 
@@ -373,21 +395,58 @@ def main():
     nu_samples = hmc_stats["nu_samples"]
     f_train_samples = L_dense @ nu_samples.T
 
-    # Sample predictive probabilities
-    p_test_samples = sample_predictive_probabilities(
+    # Sample predictive probabilities for the labeled test set.
+    p_test_samples, latent_test_samples = sample_predictive_probabilities(
         K_train,
-        K_test_train,
-        K_test_test,
+        K_test_train_eval,
+        K_test_test_eval,
         f_train_samples,
         n_conditional_draws=10,
         seed=999,
     )
 
-    predictive_prob = np.mean(p_test_samples, axis=0)
-    predictive_std = np.std(p_test_samples, axis=0)
+    pred_summary = summarize_predictive_distribution(
+        p_samples=p_test_samples,
+        latent_samples=latent_test_samples,
+    )
 
-    prob_grid = predictive_prob.reshape(X1.shape)
-    std_grid = predictive_std.reshape(X1.shape)
+    predictive_prob = pred_summary["prob_mean"]
+    predictive_var = pred_summary["prob_variance"]
+    predictive_std = pred_summary["prob_std"]
+
+    predictive_latent_mean = pred_summary["latent_mean"]
+    predictive_latent_var = pred_summary["latent_variance"]
+    predictive_latent_std = pred_summary["latent_std"]
+
+    prob_q05 = pred_summary["prob_q05"]
+    prob_q50 = pred_summary["prob_q50"]
+    prob_q95 = pred_summary["prob_q95"]
+
+    latent_q05 = pred_summary["latent_q05"]
+    latent_q50 = pred_summary["latent_q50"]
+    latent_q95 = pred_summary["latent_q95"]
+
+    test_metrics = evaluate_binary_probabilistic_predictions(
+        y_true=y_test,
+        p_pred=predictive_prob,
+        threshold=0.5,
+        n_bins=15,
+    )
+    print_metric_table(test_metrics, title="HMC GP test metrics")
+
+    # Sample predictive probabilities for plotting on the grid.
+    p_plot_samples, _ = sample_predictive_probabilities(
+        K_train,
+        K_test_train_plot,
+        K_test_test_plot,
+        f_train_samples,
+        n_conditional_draws=10,
+        seed=999,
+    )
+    predictive_prob_plot = np.mean(p_plot_samples, axis=0)
+    predictive_std_plot = np.std(p_plot_samples, axis=0)
+    prob_grid = predictive_prob_plot.reshape(X1.shape)
+    std_grid = predictive_std_plot.reshape(X1.shape)
 
     # Plot
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
@@ -458,14 +517,27 @@ def main():
 
     np.savez(
         results_path,
-        X_test=X_test,
-        predictive_prob=predictive_prob,
-        predictive_std=predictive_std,
+        X_test_plot=X_test_plot,
+        X_test_labeled=X_test_labeled,
+        y_test=y_test,
+        predictive_prob_plot=predictive_prob_plot,
+        predictive_std_plot=predictive_std_plot,
+        predictive_prob_test=predictive_prob,
+        predictive_std_test=predictive_std,
+        predictive_latent_mean_test=predictive_latent_mean,
+        predictive_latent_var_test=predictive_latent_var,
+        prob_q05=prob_q05,
+        prob_q50=prob_q50,
+        prob_q95=prob_q95,
+        latent_q05=latent_q05,
+        latent_q50=latent_q50,
+        latent_q95=latent_q95,
         X_train=X_train,
         y_train=y_train,
         accept_rate=hmc_stats["accept_rate"],
         tau_nu=tau_nu,
         tau_logp=tau_logp,
+        **test_metrics,
     )
 
     print("HMC predictive computation completed.")
