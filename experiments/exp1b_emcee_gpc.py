@@ -94,9 +94,15 @@ def compute_tau_emcee(chain: np.ndarray) -> float:
         return float("nan")
 
     tau = np.asarray(tau, dtype=float).reshape(-1)
+    
+    # Filter out non-finite values
+    tau = tau[np.isfinite(tau)]
+    
     if tau.size == 0:
         return float("nan")
-    return float(np.nanmean(tau))
+    
+    # Return the maximum tau (most conservative estimate)
+    return float(np.max(tau))
 
 
 def compute_ess_from_tau(n_steps: int, n_walkers: int, tau: float) -> float:
@@ -302,8 +308,13 @@ def main() -> None:
         dim = F.shape[1]
         n_walkers = max(2 * dim + 2, 24)
 
-        gaussian_step = (2.38 / np.sqrt(dim)) ** 2
-        mala_step = 0.6 / np.sqrt(dim)
+        rwm_scale = 1.2
+        mala_scale = 1.5
+        hmc_scale = 0.5
+
+        gaussian_step = (rwm_scale / np.sqrt(dim)) ** 2
+        
+        mala_step = mala_scale / np.sqrt(dim)
 
         # emcee's GaussianMove is exactly a Gaussian random-walk MH proposal here.
         gaussian_move = emcee.moves.GaussianMove(cov=gaussian_step, mode="vector")
@@ -327,7 +338,7 @@ def main() -> None:
             seed=2000 + k,
             move=mala_move,
         )
-        hmc_step = 0.08 / np.sqrt(max(dim, 1))
+        hmc_step = hmc_scale / np.sqrt(max(dim, 1))
         hmc_leapfrog = 12
         hmc_stats = run_hmc(
             F,

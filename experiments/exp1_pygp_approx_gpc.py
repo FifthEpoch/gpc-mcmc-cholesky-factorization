@@ -4,13 +4,10 @@ Experiment: pyGPs approximate inference variants for binary GP classification.
 Requested method tags:
 - LA
 - EP
-- KL
-- VB
-- FV
 
 This script mirrors the synthetic two-blob setup from exp1b_emcee_gpc.
-It runs whichever requested variants are actually supported by the installed
-pyGPs build and plots posterior probability surfaces for available variants.
+It runs LA and EP, extracts latent predictive Gaussian and predictive probability,
+and plots them in a single figure with six panels.
 """
 
 from __future__ import annotations
@@ -58,20 +55,8 @@ def _to_pm1_labels(y01: np.ndarray) -> np.ndarray:
     return np.where(y01 > 0, 1.0, -1.0)
 
 
-def _method_to_inference_name(method_code: str) -> str:
-    """Map requested tags to pyGPs inference names."""
-    method_map = {
-        "LA": "Laplace",
-        "EP": "EP",
-        "KL": "KL",
-        "VB": "VB",
-        "FV": "FV",
-    }
-    return method_map[method_code]
-
-
 def _configure_inference(model: Any, pygp_module: Any, method_code: str) -> None:
-    """Configure pyGPs inference robustly across known API quirks."""
+    """Only keep LA and EP."""
     if method_code == "LA":
         model.inffunc = pygp_module.inf.Laplace()
         return
@@ -82,12 +67,6 @@ def _configure_inference(model: Any, pygp_module: Any, method_code: str) -> None
             return
         raise RuntimeError("EP is not present in this pyGPs.inf module.")
 
-    if method_code in {"KL", "VB", "FV"}:
-        raise RuntimeError(
-            f"{method_code} is not implemented in this pyGPs GPC build; "
-            "available inference backends here are EP and Laplace."
-        )
-
     raise RuntimeError(f"Unsupported method code: {method_code}")
 
 
@@ -97,20 +76,81 @@ def fit_predict_method(
     y01: np.ndarray,
     X_grid: np.ndarray,
     method_code: str,
-) -> tuple[np.ndarray, float]:
-    """Fit one requested method if supported and return p(y=1) on the grid."""
+) -> dict[str, Any]:
+    """
+    Fit LA or EP and return:
+    - latent predictive mean fm
+    - latent predictive variance fs2
+    - predictive class probability ym
+    - log predictive probability lp
+    """
     y_pm1 = _to_pm1_labels(y01)
 
     model = pygp_module.GPC()
     _configure_inference(model, pygp_module, method_code)
+
     t0 = time.perf_counter()
     model.getPosterior(X, y_pm1)
-    ym, _, _, _, _ = model.predict(X_grid)
+
+    # pyGPs predict convention:
+    # ym  : predictive mean of observed output / class probability-like output
+    # ys2 : predictive variance of observed output
+    # fm  : latent predictive mean
+    # fs2 : latent predictive variance
+    # lp  : log predictive probability
+    ym, ys2, fm, fs2, lp = model.predict(X_grid)
     elapsed = time.perf_counter() - t0
 
-    # pyGPs returns predictive mean in [-1, 1]; map to probability-like [0, 1].
-    p = 0.5 * (np.asarray(ym, dtype=float).reshape(-1) + 1.0)
-    return np.clip(p, 0.0, 1.0), float(elapsed)
+    ym = np.asarray(ym, dtype=float).reshape(-1)
+    ys2 = np.asarray(ys2, dtype=float).reshape(-1)
+    fm = np.asarray(fm, dtype=float).reshape(-1)
+    fs2 = np.asarray(fs2, dtype=float).reshape(-1)
+    lp = np.asarray(lp, dtype=float).reshape(-1)
+
+    # Safety clipping for probabilities if needed
+    prob = np.clip(ym, 0.0, 1.0)
+
+    return {
+        "fit_predict_time": float(elapsed),
+        "prob": prob,
+        "y_var": ys2,
+        "latent_mean": fm,
+        "latent_var": np.maximum(fs2, 0.0),
+        "log_pred_prob": lp,
+    }
+
+
+def _plot_surface(
+    ax: Any,
+    xx: np.ndarray,
+    yy: np.ndarray,
+    values: np.ndarray,
+    X: np.ndarray,
+    y: np.ndarray,
+    title: str,
+    cmap: str,
+    vmin: float | None = None,
+    vmax: float | None = None,
+):
+    mappable = ax.contourf(
+        xx,
+        yy,
+        values,
+        levels=40,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        alpha=0.9,
+    )
+    ax.scatter(
+        X[:, 0], X[:, 1],
+        c=y, cmap="coolwarm", s=8, alpha=0.45, vmin=0, vmax=1
+    )
+    ax.set_title(title)
+    ax.grid(alpha=0.25)
+    ax.set_xlabel("x1")
+    ax.set_ylabel("x2")
+    return mappable
 
 
 def main() -> None:
@@ -123,104 +163,80 @@ def main() -> None:
 
     x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
     y_min, y_max = X[:, 1].min() - 0.5, X[:, 1].max() + 0.5
-    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 120), np.linspace(y_min, y_max, 120))
+    xx, yy = np.meshgrid(
+        np.linspace(x_min, x_max, 120),
+        np.linspace(y_min, y_max, 120),
+    )
     X_grid = np.column_stack([xx.ravel(), yy.ravel()])
 
-    requested_methods = ["LA", "EP", "KL", "VB", "FV"]
-    available_results: dict[str, dict[str, Any]] = {}
-    unavailable: dict[str, str] = {}
+    methods = ["LA", "EP"]
+    results: dict[str, dict[str, Any]] = {}
 
-    print("Requested pyGPs methods:", ", ".join(requested_methods))
-    for method in requested_methods:
-        try:
-            probs_grid, elapsed = fit_predict_method(pygp, X, y, X_grid, method)
-            available_results[method] = {
-                "probs_grid": probs_grid,
-                "fit_predict_time": elapsed,
-            }
-            print(f"  {method}: available, fit+predict={elapsed:.3f}s")
-        except Exception as err:
-            unavailable[method] = str(err)
-            print(f"  {method}: unavailable ({err})")
+    print("Running pyGPs methods:", ", ".join(methods))
+    for method in methods:
+        results[method] = fit_predict_method(pygp, X, y, X_grid, method)
+        print(f"  {method}: fit+predict={results[method]['fit_predict_time']:.3f}s")
 
-    available_methods = list(available_results.keys())
-    if not available_methods:
-        raise RuntimeError(
-            "No requested methods are available in this pyGPs build. "
-            "Try another GP package or Python version."
-        )
-
-    n_panels = len(available_methods)
-    ncols = min(3, n_panels)
-    nrows = int(np.ceil(n_panels / ncols))
+    # ------------------------------------------------------------
+    # Single figure with 6 panels: 3 rows (latent mean, latent std, prob) x 2 columns (LA, EP)
+    # ------------------------------------------------------------
     fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(4.8 * ncols, 4.2 * nrows),
-        sharex=True,
-        sharey=True,
-        constrained_layout=True,
+        3, 2, figsize=(10, 12), sharex=True, sharey=True, constrained_layout=True
     )
-    axes_arr = np.atleast_1d(axes).reshape(-1)
 
-    posterior_mappable = None
-    for idx, method in enumerate(available_methods):
-        ax = axes_arr[idx]
-        p_grid = available_results[method]["probs_grid"].reshape(xx.shape)
-        posterior_mappable = ax.contourf(
-            xx,
-            yy,
-            p_grid,
-            levels=40,
+    # Row 0: latent predictive mean μ_*(x)
+    for col, method in enumerate(methods):
+        ax = axes[0, col]
+        z = results[method]["latent_mean"].reshape(xx.shape)
+        mappable = _plot_surface(
+            ax, xx, yy, z, X, y,
+            title=f"{method} latent mean",
+            cmap="coolwarm"
+        )
+        if col == 1:
+            fig.colorbar(mappable, ax=ax, shrink=0.9, label="Latent predictive mean $\\mu_*(x)$")
+
+    # Row 1: latent predictive std sqrt(σ_*^2(x))
+    for col, method in enumerate(methods):
+        ax = axes[1, col]
+        z = np.sqrt(results[method]["latent_var"]).reshape(xx.shape)
+        mappable = _plot_surface(
+            ax, xx, yy, z, X, y,
+            title=f"{method} latent std",
+            cmap="magma"
+        )
+        if col == 1:
+            fig.colorbar(mappable, ax=ax, shrink=0.9, label="Latent predictive std $\\sqrt{\\sigma_*^2(x)}$")
+
+    # Row 2: predictive class probability P(y=1 | x, D)
+    for col, method in enumerate(methods):
+        ax = axes[2, col]
+        z = results[method]["prob"].reshape(xx.shape)
+        mappable = _plot_surface(
+            ax, xx, yy, z, X, y,
+            title=f"{method} predictive probability",
             cmap="viridis",
             vmin=0.0,
-            vmax=1.0,
-            alpha=0.9,
+            vmax=1.0
         )
-        ax.scatter(X[:, 0], X[:, 1], c=y, cmap="coolwarm", s=8, alpha=0.45, vmin=0, vmax=1)
-        ax.set_title(f"{method} (t={available_results[method]['fit_predict_time']:.2f}s)")
-        ax.grid(alpha=0.25)
-        ax.set_xlabel("x1")
-        ax.set_ylabel("x2")
+        if col == 1:
+            fig.colorbar(mappable, ax=ax, shrink=0.9, label="Predictive probability $P(y=1\\mid x,D)$")
 
-    for ax in axes_arr[n_panels:]:
-        ax.set_axis_off()
-
-    fig.colorbar(
-        posterior_mappable,
-        ax=axes_arr[:n_panels],
-        shrink=0.9,
-        label="Posterior probability P(y=1)",
-    )
-
-    title = "pyGPs posterior surfaces for available requested variants"
-    if unavailable:
-        title += "\nUnavailable: " + ", ".join(unavailable.keys())
-    fig.suptitle(title, fontsize=12)
-
-    out_png = os.path.join(data_dir, "exp1_pygp_posterior_methods.png")
-    plt.savefig(out_png, dpi=170)
+    plt.savefig(os.path.join(data_dir, "exp1_pygp_la_ep_all.png"), dpi=170)
     plt.close()
 
     np.save(
-        os.path.join(data_dir, "exp1_pygp_results.npy"),
+        os.path.join(data_dir, "exp1_pygp_la_ep_results.npy"),
         {
-            "requested_methods": requested_methods,
-            "available_methods": available_methods,
-            "available_results": {
-                m: {
-                    "fit_predict_time": available_results[m]["fit_predict_time"],
-                }
-                for m in available_methods
-            },
-            "unavailable": unavailable,
+            "methods": methods,
+            "fit_predict_time": {m: results[m]["fit_predict_time"] for m in methods},
         },
         allow_pickle=True,
     )
 
     print("Saved:")
-    print("- data/exp1_pygp_posterior_methods.png")
-    print("- data/exp1_pygp_results.npy")
+    print("- data/exp1_pygp_la_ep_all.png")
+    print("- data/exp1_pygp_la_ep_results.npy")
 
 
 if __name__ == "__main__":

@@ -144,10 +144,9 @@ def main() -> None:
 
     train_time = time.perf_counter() - t0
 
-    # Predict posterior probabilities on a 2D grid
+    # Predict latent distribution q(f_* | D) and predictive probability P(y=1 | x_*, D)
     model.eval()
     likelihood.eval()
-
     x_min, x_max = X_np[:, 0].min() - 0.5, X_np[:, 0].max() + 0.5
     y_min, y_max = X_np[:, 1].min() - 0.5, X_np[:, 1].max() + 0.5
     xx, yy = np.meshgrid(
@@ -156,20 +155,67 @@ def main() -> None:
     )
     X_grid_np = np.column_stack([xx.ravel(), yy.ravel()]).astype(np.float32)
     X_grid = torch.tensor(X_grid_np, dtype=torch.float32, device=device)
-
-    with torch.no_grad(), gpytorch.settings.fast_pred_var():
-        latent_dist = model(X_grid)
-        pred_dist = likelihood(latent_dist)
-        p_grid = pred_dist.probs.detach().cpu().numpy().reshape(xx.shape)
-
-        train_latent = model(X)
-        train_pred = likelihood(train_latent)
-        p_train = train_pred.probs.detach().cpu().numpy()
-
+    def predict_binary(test_x: torch.Tensor):
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            q_f = model(test_x)           # latent predictive distribution q(f_*)
+            p_y = likelihood(q_f)         # predictive Bernoulli distribution p(y_* | x_*, D)
+            mu = q_f.mean                 # latent predictive mean
+            var = q_f.variance            # latent predictive marginal variance
+            prob1 = p_y.probs             # predictive probability P(y=1 | x_*, D)
+        return q_f, p_y, mu, var, prob1
+    # Grid predictions
+    q_grid, p_grid_dist, mu_grid_t, var_grid_t, prob_grid_t = predict_binary(X_grid)
+    mu_grid = mu_grid_t.detach().cpu().numpy().reshape(xx.shape)
+    var_grid = var_grid_t.detach().cpu().numpy().reshape(xx.shape)
+    std_grid = np.sqrt(np.maximum(var_grid, 0.0))
+    p_grid = prob_grid_t.detach().cpu().numpy().reshape(xx.shape)
+    # Training-point predictions
+    q_train, p_train_dist, mu_train_t, var_train_t, prob_train_t = predict_binary(X)
+    mu_train = mu_train_t.detach().cpu().numpy()
+    var_train = var_train_t.detach().cpu().numpy()
+    p_train = prob_train_t.detach().cpu().numpy()
+    # Hard predictions + a couple of useful probabilistic metrics
     y_pred = (p_train >= 0.5).astype(np.int64)
     accuracy = float(np.mean(y_pred == y_np))
-
-    # Plot posterior + data points
+    train_loglik = float(
+        np.mean(y_np * np.log(p_train + 1e-10) + (1 - y_np) * np.log(1 - p_train + 1e-10))
+    )
+    train_brier = float(np.mean((p_train - y_np) ** 2))
+    # Plot 1: latent predictive mean
+    plt.figure(figsize=(7, 6))
+    cf = plt.contourf(
+        xx, yy, mu_grid, levels=50, cmap="coolwarm", alpha=0.9
+    )
+    plt.scatter(
+        X_np[:, 0], X_np[:, 1],
+        c=y_np, cmap="coolwarm", s=8, alpha=0.45, vmin=0, vmax=1
+    )
+    plt.colorbar(cf, label="Latent predictive mean E[f(x) | D]")
+    plt.title("GPyTorch SVGP latent predictive mean")
+    plt.xlabel("x1")
+    plt.ylabel("x2")
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(os.path.join(data_dir, "exp1_gpytorch_svgp_latent_mean.png"), dpi=170)
+    plt.close()
+    # Plot 2: latent predictive standard deviation
+    plt.figure(figsize=(7, 6))
+    cf = plt.contourf(
+        xx, yy, std_grid, levels=50, cmap="magma", alpha=0.9
+    )
+    plt.scatter(
+        X_np[:, 0], X_np[:, 1],
+        c=y_np, cmap="coolwarm", s=8, alpha=0.45, vmin=0, vmax=1
+    )
+    plt.colorbar(cf, label="Latent predictive std sqrt(Var[f(x) | D])")
+    plt.title("GPyTorch SVGP latent predictive std")
+    plt.xlabel("x1")
+    plt.ylabel("x2")
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(os.path.join(data_dir, "exp1_gpytorch_svgp_latent_std.png"), dpi=170)
+    plt.close()
+    # Plot 3: predictive probability P(y=1 | x, D)
     plt.figure(figsize=(7, 6))
     cf = plt.contourf(
         xx,
@@ -181,16 +227,18 @@ def main() -> None:
         vmax=1.0,
         alpha=0.9,
     )
-    plt.scatter(X_np[:, 0], X_np[:, 1], c=y_np, cmap="coolwarm", s=8, alpha=0.45, vmin=0, vmax=1)
-    plt.colorbar(cf, label="Posterior probability P(y=1)")
-    plt.title("GPyTorch SVGP posterior (binary classification)")
+    plt.scatter(
+        X_np[:, 0], X_np[:, 1],
+        c=y_np, cmap="coolwarm", s=8, alpha=0.45, vmin=0, vmax=1
+    )
+    plt.colorbar(cf, label="Predictive probability P(y=1 | x, D)")
+    plt.title("GPyTorch SVGP predictive probability")
     plt.xlabel("x1")
     plt.ylabel("x2")
     plt.grid(alpha=0.25)
     plt.tight_layout()
-    plt.savefig(os.path.join(data_dir, "exp1_gpytorch_svgp_posterior.png"), dpi=170)
+    plt.savefig(os.path.join(data_dir, "exp1_gpytorch_svgp_prob.png"), dpi=170)
     plt.close()
-
     np.save(
         os.path.join(data_dir, "exp1_gpytorch_svgp_results.npy"),
         {
@@ -201,15 +249,27 @@ def main() -> None:
             "train_time": float(train_time),
             "final_loss": float(epoch_losses[-1]) if epoch_losses else float("nan"),
             "train_accuracy": accuracy,
+            "train_loglik": train_loglik,
+            "train_brier": train_brier,
             "device": str(device),
+            "latent_mean_train": mu_train,
+            "latent_var_train": var_train,
+            "prob_train": p_train,
+            "grid_shape": xx.shape,
+            "latent_mean_grid": mu_grid,
+            "latent_var_grid": var_grid,
+            "prob_grid": p_grid,
         },
         allow_pickle=True,
     )
-
     print(f"Training done in {train_time:.2f}s on {device}.")
     print(f"Train accuracy: {accuracy * 100.0:.2f}%")
+    print(f"Train log-likelihood: {train_loglik:.4f}")
+    print(f"Train Brier score: {train_brier:.4f}")
     print("Saved:")
-    print("- data/exp1_gpytorch_svgp_posterior.png")
+    print("- data/exp1_gpytorch_svgp_latent_mean.png")
+    print("- data/exp1_gpytorch_svgp_latent_std.png")
+    print("- data/exp1_gpytorch_svgp_prob.png")
     print("- data/exp1_gpytorch_svgp_results.npy")
 
 

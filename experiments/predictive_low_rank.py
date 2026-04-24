@@ -126,7 +126,7 @@ def run_hmc(factor, y, n_samples, n_warmup, seed, step_size, n_leapfrog):
             nu_samples[post_idx] = nu
             logp_trace[post_idx] = logp
             post_idx += 1
-
+            
     return {
         "nu_samples": nu_samples,
         "logp_trace": logp_trace,
@@ -258,7 +258,7 @@ def main():
     # -------------------------
     # Data
     # -------------------------
-    X_train, y_train = make_fake_blobs(seed=42, n_per_class=100)
+    X_train, y_train = make_fake_blobs(seed=42, n_per_class=1000)
     n_train = X_train.shape[0]
 
     x1 = np.linspace(-3, 3, 20)
@@ -278,7 +278,7 @@ def main():
     # -------------------------
     # Low-rank factor for K_XX
     # -------------------------
-    train_rank = min(80, n_train)
+    train_rank = min(200, n_train)
     nugget = 1e-4
 
     low_rank_train = arpcholesky(K_train, k=train_rank, b=10, seed=42)
@@ -287,9 +287,9 @@ def main():
     # -------------------------
     # HMC in low-rank coordinates
     # -------------------------
-    n_samples = 200
+    n_samples = 2000
     n_warmup = 200
-    hmc_step = 0.08 / np.sqrt(train_rank)
+    hmc_step = 2 / np.sqrt(train_rank)
     n_leapfrog = 12
 
     hmc_stats = run_hmc(
@@ -303,6 +303,11 @@ def main():
     )
 
     print(f"HMC acceptance rate: {hmc_stats['accept_rate']:.3f}")
+
+    tau_nu = compute_tau_emcee(hmc_stats["nu_samples"])
+    tau_logp = compute_tau_emcee(hmc_stats["logp_trace"])
+    print(f"HMC tau (nu mean): {tau_nu:.2f}")
+    print(f"HMC tau (logp): {tau_logp:.2f}")
 
     nu_samples = hmc_stats["nu_samples"]               # (n_samples, train_rank)
     f_train_samples = F @ nu_samples.T                 # (n_train, n_samples)
@@ -385,6 +390,8 @@ def main():
         X_train=X_train,
         y_train=y_train,
         accept_rate=hmc_stats["accept_rate"],
+        tau_nu=tau_nu,
+        tau_logp=tau_logp,
         train_rank=train_rank,
         test_rank=min(120, n_test),
         nugget=nugget,

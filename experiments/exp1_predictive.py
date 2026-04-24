@@ -15,6 +15,7 @@ import os
 import sys
 import time
 
+import emcee
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.linalg import cho_solve, cholesky
@@ -29,6 +30,24 @@ if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
 
 from my_cholesky.kernels import GaussianKernel_mtx
+
+
+def compute_tau_emcee(chain):
+    """Estimate integrated autocorrelation time with emcee's implementation."""
+    chain = np.asarray(chain, dtype=float)
+    print(f"  compute_tau_emcee received chain shape: {chain.shape}")
+    
+    try:
+        tau = emcee.autocorr.integrated_time(chain, quiet=True)
+        print(f"    tau result (raw): {tau}")
+    except Exception as err:
+        print(f"WARNING: emcee autocorr.integrated_time failed: {err}")
+        return float("nan")
+
+    tau = np.asarray(tau, dtype=float).reshape(-1)
+    if tau.size == 0:
+        return float("nan")
+    return float(np.nanmean(tau))
 
 
 def make_fake_blobs(seed=42, n_per_class=100):
@@ -120,6 +139,7 @@ def run_hmc(
     logp = log_posterior(nu, factor, y)
 
     nu_samples = np.zeros((n_samples, dim), dtype=float)
+    logp_trace = np.zeros((n_samples,), dtype=float)
     post_idx = 0
 
     n_accept = 0
@@ -157,6 +177,13 @@ def run_hmc(
 
         accept_log_prob = current_h - proposal_h
 
+        # Debug first few iterations
+        if i < 5:
+            grad_norm = np.linalg.norm(grad)
+            proposal_distance = np.linalg.norm(proposal_nu - current_nu)
+            print(f"iter {i}: grad_norm={grad_norm:.4f}, proposal_dist={proposal_distance:.6f}, "
+                  f"accept_prob={np.exp(min(0, accept_log_prob)):.6f}")
+
         if np.log(rng.random()) < accept_log_prob:
             nu = proposal_nu
             logp = proposal_logp
@@ -164,12 +191,14 @@ def run_hmc(
 
         if i >= n_warmup:
             nu_samples[post_idx, :] = nu
+            logp_trace[post_idx] = logp
             post_idx += 1
 
     accept_rate = n_accept / total_steps
 
     return {
         "nu_samples": nu_samples,
+        "logp_trace": logp_trace,
         "step_size": float(step_size),
         "n_leapfrog": int(n_leapfrog),
         "accept_rate": float(accept_rate),
@@ -260,7 +289,7 @@ def main():
     os.makedirs(data_dir, exist_ok=True)
 
     # Training data
-    X_train, y_train = make_fake_blobs(seed=42, n_per_class=100)
+    X_train, y_train = make_fake_blobs(seed=42, n_per_class=1000)
     n_train = X_train.shape[0]
 
     # Test grid
@@ -294,10 +323,17 @@ def main():
     L_dense = np.linalg.cholesky(K_train)
 
     # HMC parameters
-    n_samples = 200
-    n_warmup = 200
-    hmc_step = 0.08 / np.sqrt(n_train)
+    n_samples = 4000
+    n_warmup = 400
+    hmc_step = 4 / np.sqrt(n_train)
     n_leapfrog = 12
+
+    print(f"HMC setup:")
+    print(f"  n_train: {n_train}")
+    print(f"  step_size: {hmc_step:.6f}")
+    print(f"  n_leapfrog: {n_leapfrog}")
+    print(f"  n_samples: {n_samples}")
+    print(f"  n_warmup: {n_warmup}")
 
     hmc_stats = run_hmc(
         L_dense,
@@ -310,6 +346,28 @@ def main():
     )
 
     print(f"HMC acceptance rate: {hmc_stats['accept_rate']:.3f}")
+
+    # Diagnostics on chain
+    print(f"\nChain sizes:")
+    print(f"  nu_samples shape: {hmc_stats['nu_samples'].shape}")
+    print(f"  logp_trace shape: {hmc_stats['logp_trace'].shape}")
+    print(f"  logp_trace min/max: {np.min(hmc_stats['logp_trace']):.4f} / {np.max(hmc_stats['logp_trace']):.4f}")
+    print(f"  logp_trace std: {np.std(hmc_stats['logp_trace']):.4f}")
+
+    # Check if chain is moving
+    nu_samples = hmc_stats['nu_samples']
+    mean_step = np.mean(np.linalg.norm(np.diff(nu_samples, axis=0), axis=1))
+    std_nu = np.std(nu_samples, axis=0).mean()
+    print(f"\nChain movement diagnostics:")
+    print(f"  Mean step size between consecutive samples: {mean_step:.6f}")
+    print(f"  Mean std of nu chain: {std_nu:.6f}")
+    print(f"  nu_samples min/max: {np.min(nu_samples):.4f} / {np.max(nu_samples):.4f}")
+    print(f"  nu_samples std (overall): {np.std(nu_samples):.4f}")
+
+    tau_nu = compute_tau_emcee(hmc_stats["nu_samples"])
+    tau_logp = compute_tau_emcee(hmc_stats["logp_trace"])
+    print(f"HMC tau (nu mean): {tau_nu:.2f}")
+    print(f"HMC tau (logp): {tau_logp:.2f}")
 
     # Convert nu samples to latent training samples f samples.
     nu_samples = hmc_stats["nu_samples"]
@@ -406,6 +464,8 @@ def main():
         X_train=X_train,
         y_train=y_train,
         accept_rate=hmc_stats["accept_rate"],
+        tau_nu=tau_nu,
+        tau_logp=tau_logp,
     )
 
     print("HMC predictive computation completed.")
