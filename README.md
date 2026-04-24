@@ -1,6 +1,36 @@
-# my_cholesky_project
+# Scalable Gaussian Process Classification via RPCholesky
 
-Experiment code for benchmarking RPCholesky variants for scalable kernel matrix approximation.
+This project investigates whether **Randomly Pivoted Cholesky (RPCholesky)** low-rank
+approximations can make **Gaussian Process Classification (GPC)** practical for
+large-scale medical imaging tasks, while preserving the calibrated uncertainty
+estimates that GPs are valued for.
+
+Standard GPC requires inverting an \(N \times N\) kernel matrix, which is
+\(O(N^3)\) and infeasible for datasets with hundreds of thousands of samples.
+RPCholesky (Chen et al., 2023) provides a rank-\(k\) Nystr\"{o}m approximation
+that reduces this to \(O(Nk^2)\), but it is an open question whether the
+approximation degrades calibration or predictive performance on real clinical data.
+
+We benchmark RPCholesky-accelerated GPC against deterministic baselines on three
+histopathology / medical imaging datasets:
+
+- **PatchCamelyon (PCam)** -- 327K lymph node patches, binary metastasis detection
+- **CAMELYON17-WILDS** -- 455K patches from 5 hospitals, with distribution shift
+- **EMBED** -- mammography screening dataset (access-gated)
+
+## Experiments
+
+| # | Experiment | Question |
+|---|-----------|----------|
+| 0 | RPCholesky algorithm verification | Do Block and Accelerated RPCholesky match the approximation quality of Basic RPCholesky while being faster? |
+| 1 | MCMC-based GPC | Can RPCholesky + MCMC scale GPC to large N while maintaining calibration? |
+| 3 | Deterministic NN baseline | How does a simple MLP on frozen DenseNet-121 embeddings perform on predictive metrics and calibration? |
+| 4 | TabPFN baseline | How does a tabular foundation model (TabPFN) compare on the same frozen embeddings? |
+
+Experiments 3 and 4 serve as **baselines**: if the GP achieves comparable AUROC
+but better-calibrated probabilities (lower ECE, lower Brier score) and fewer
+false negatives, that supports the thesis that Bayesian uncertainty from
+RPCholesky-GPC is worth the extra compute.
 
 ## Environment setup (cluster)
 
@@ -194,6 +224,8 @@ recorded in each split's `labels.csv`.
   - You can use `--export-pcam-images` after preparation to materialize
     individual image files plus a `labels.csv` manifest for each split.
 - **CAMELYON17-WILDS**: downloaded through `wilds.get_dataset(..., download=True)`.
+- **PCam**: downloaded from HuggingFace mirror ([1aurent/PatchCamelyon](https://huggingface.co/datasets/1aurent/PatchCamelyon)).
+- **CAMELYON17-WILDS**: downloaded from HuggingFace mirror ([wltjr1007/Camelyon17-WILDS](https://huggingface.co/datasets/wltjr1007/Camelyon17-WILDS)). The original CodaLab source used by the `wilds` library has been broken since June 2025.
 - **EMBED**: requires approval first. Submit access request:
   - [Access request form](https://forms.gle/6YVFKTz7ucEJKEWw8)
   - [Documentation](https://docs.hitilab.com/)
@@ -408,3 +440,104 @@ and likewise for `valid/` and `test/`.
 `y_embeddings.npy` has shape `(n, 1)`, where row `i` matches row `i` of
 `labels.csv` excluding the header and therefore the image path from that same
 row.
+## Experiment 3: Deterministic Neural Network Baseline
+
+### Overview
+
+Trains a 2-layer MLP classifier on frozen DenseNet-121 embeddings, evaluating
+predictive performance (AUROC, AUPRC), calibration (ECE, Brier score),
+sensitivity, and false-negative rate on PCam, CAMELYON17-WILDS, and EMBED.
+
+### Pipeline
+
+1. **Extract embeddings** -- pass raw images through frozen DenseNet-121 and
+   save 1024-dim feature vectors as `.npy` files.
+2. **Train + evaluate** -- train the MLP head on the embeddings, then compute
+   all metrics on the held-out test split.
+
+### Running locally
+
+```bash
+# Step 1: extract embeddings (needs GPU for reasonable speed)
+python experiments/extract_embeddings.py \
+    --dataset pcam --data-root datasets --device cuda
+
+# Step 2: train & evaluate
+python experiments/exp3_nn_baseline.py \
+    --dataset pcam --embedding-dir data/embeddings --device cuda
+```
+
+Replace `pcam` with `camelyon17` or `embed` as needed.
+
+### Running on the cluster (SLURM)
+
+```bash
+sbatch --export=ALL,NETID=ab1234,DATASET=pcam \
+       scripts/exp3_nn_baseline.sbatch
+```
+
+Optional overrides:
+
+| Variable      | Default       | Description                                |
+| ------------- | ------------- | ------------------------------------------ |
+| `DATASET`     | `pcam`        | `pcam`, `camelyon17`, or `embed`           |
+| `ENCODER`     | `densenet121` | `densenet121` or `dinov2_vitl14`           |
+| `SKIP_EMBED`  | `0`           | Set to `1` to reuse existing embeddings    |
+
+### Outputs
+
+All outputs are written to `data/`:
+
+- `exp3_<dataset>_results.json` -- full metric dictionary
+- `exp3_<dataset>_calibration.png` -- reliability diagram
+- `exp3_<dataset>_roc.png` -- ROC curve
+- `exp3_camelyon17_per_hospital.json` -- per-hospital breakdown (CAMELYON17 only)
+
+## Experiment 4: TabPFN Tabular Model Baseline
+
+### Overview
+
+Uses [TabPFN](https://github.com/PriorLabs/TabPFN) (Hollmann et al., 2025),
+a pre-trained transformer foundation model for tabular data, as a classifier
+on the same frozen embeddings used in Experiment 3. TabPFN performs in-context
+learning in a single forward pass -- no gradient-based training loop is needed.
+
+TabPFN works best on datasets with up to ~50k samples. For larger training sets
+the script automatically subsamples (stratified) to `--max-train-samples`.
+
+### Prerequisites
+
+Embeddings must already exist in `data/embeddings/` (produced by
+`experiments/extract_embeddings.py` from Experiment 3).
+
+### Running locally
+
+```bash
+python experiments/exp4_tabpfn_baseline.py \
+    --dataset pcam --embedding-dir data/embeddings --device cuda
+```
+
+Replace `pcam` with `camelyon17` or `embed` as needed.
+
+### Running on the cluster (SLURM)
+
+```bash
+sbatch --export=ALL,NETID=ab1234,DATASET=pcam \
+       scripts/exp4_tabpfn_baseline.sbatch
+```
+
+Optional overrides:
+
+| Variable              | Default | Description                                       |
+| --------------------- | ------- | ------------------------------------------------- |
+| `DATASET`             | `pcam`  | `pcam`, `camelyon17`, or `embed`                  |
+| `MAX_TRAIN_SAMPLES`   | `50000` | Subsample training set to this size for TabPFN    |
+
+### Outputs
+
+All outputs are written to `data/`:
+
+- `exp4_<dataset>_results.json` -- full metric dictionary
+- `exp4_<dataset>_calibration.png` -- reliability diagram
+- `exp4_<dataset>_roc.png` -- ROC curve
+- `exp4_camelyon17_per_hospital.json` -- per-hospital breakdown (CAMELYON17 only)

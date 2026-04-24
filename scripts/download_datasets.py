@@ -8,6 +8,13 @@ Supports:
 2) Optional PCam split preparation under train/valid/test
 3) CAMELYON17-WILDS via the WILDS Python package
 4) EMBED setup guidance (access request + optional AWS sync command)
+1) PatchCamelyon (PCam)   — via HuggingFace (1aurent/PatchCamelyon)
+2) CAMELYON17-WILDS       — via HuggingFace (wltjr1007/Camelyon17-WILDS)
+3) EMBED                  — access-gated (guidance + optional AWS S3 sync)
+
+Both PCam and CAMELYON17 use HuggingFace ``datasets`` for reliable,
+rate-limit-free downloads (the original Google Drive / CodaLab sources
+are broken or frequently rate-limited).
 """
 
 from __future__ import annotations
@@ -17,7 +24,9 @@ import csv
 import gzip
 import hashlib
 import shutil
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict
 
@@ -91,38 +100,54 @@ def md5sum(path: Path, block_size: int = 1024 * 1024) -> str:
 
 
 def download_pcam_google_drive(target_dir: Path) -> None:
+
+
+def _ensure_package(package: str, pip_name: str | None = None) -> None:
+    """Import *package*; if missing, install it via pip and retry."""
     try:
-        import gdown
-    except ImportError as exc:
-        raise RuntimeError(
-            "gdown is not installed. Install dependencies first "
-            "(pip install -r requirements.txt)."
-        ) from exc
+        __import__(package)
+    except ImportError:
+        install = pip_name or package
+        print(f"[setup] {package!r} not found — installing via pip ...")
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--quiet", install]
+        )
+
+
+HF_PCAM_REPO = "1aurent/PatchCamelyon"
+HF_CAMELYON17_REPO = "wltjr1007/Camelyon17-WILDS"
+
+
+def _setup_hf_cache(cache_dir: str) -> None:
+    """Point HuggingFace downloads at *cache_dir* so nothing lands in ~/.cache."""
+    os.makedirs(cache_dir, exist_ok=True)
+    os.environ.setdefault("HF_HOME", cache_dir)
+    os.environ.setdefault("HF_DATASETS_CACHE", cache_dir)
+
+
+def _download_hf_dataset(repo: str, tag: str, cache_dir: str) -> None:
+    """Download and verify a HuggingFace dataset, split by split."""
+    from datasets import load_dataset
+
+    ds_dict = load_dataset(repo, cache_dir=cache_dir)
+    for split_name, split_ds in ds_dict.items():
+        n = len(split_ds)
+        cols = split_ds.column_names
+        print(f"[{tag}]   {split_name}: {n:,} samples, columns: {cols}")
+    print(f"[{tag}] Download complete.")
+
+
+def download_pcam(target_dir: Path) -> None:
+    """Download PatchCamelyon from the HuggingFace mirror."""
+    _ensure_package("datasets")
 
     target_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[PCam] Download directory: {target_dir}")
+    hf_cache = str(target_dir / "hf_cache")
+    _setup_hf_cache(hf_cache)
 
-    for filename, info in tqdm(PCAM_FILES.items(), desc="PCam files"):
-        output_path = target_dir / filename
-        expected_md5 = info["md5"]
-        file_id = info["id"]
-
-        if output_path.exists():
-            actual_md5 = md5sum(output_path)
-            if actual_md5 == expected_md5:
-                print(f"[PCam] OK (already downloaded): {filename}")
-                continue
-            print(f"[PCam] MD5 mismatch, re-downloading: {filename}")
-            output_path.unlink()
-
-        gdown.download(id=file_id, output=str(output_path), quiet=False)
-        actual_md5 = md5sum(output_path)
-        if actual_md5 != expected_md5:
-            raise RuntimeError(
-                f"[PCam] Checksum mismatch for {filename}. "
-                f"Expected {expected_md5}, got {actual_md5}."
-            )
-        print(f"[PCam] Downloaded + verified: {filename}")
+    print(f"[PCam] Downloading from HuggingFace: {HF_PCAM_REPO}")
+    print(f"[PCam] Cache directory: {hf_cache}")
+    _download_hf_dataset(HF_PCAM_REPO, "PCam", hf_cache)
 
 
 def download_pcam_huggingface(target_dir: Path, repo_id: str) -> None:
@@ -395,18 +420,21 @@ def export_pcam_images(target_dir: Path, image_format: str = "png") -> None:
 
 
 def download_camelyon17_wilds(target_dir: Path) -> None:
-    try:
-        from wilds import get_dataset
-    except ImportError as exc:
-        raise RuntimeError(
-            "wilds is not installed. Run:\n"
-            "  pip install wilds torch torchvision"
-        ) from exc
+    """Download CAMELYON17-WILDS from the HuggingFace mirror.
+
+    The original CodaLab source used by the ``wilds`` library has been
+    permanently broken since June 2025 (HTTP 500).  This function uses
+    the community HuggingFace mirror instead.
+    """
+    _ensure_package("datasets")
 
     target_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[CAMELYON17-WILDS] Root directory: {target_dir}")
-    _ = get_dataset(dataset="camelyon17", download=True, root_dir=str(target_dir))
-    print("[CAMELYON17-WILDS] Download complete.")
+    hf_cache = str(target_dir / "hf_cache")
+    _setup_hf_cache(hf_cache)
+
+    print(f"[CAMELYON17-WILDS] Downloading from HuggingFace: {HF_CAMELYON17_REPO}")
+    print(f"[CAMELYON17-WILDS] Cache directory: {hf_cache}")
+    _download_hf_dataset(HF_CAMELYON17_REPO, "CAMELYON17-WILDS", hf_cache)
 
 
 def handle_embed(target_dir: Path, embed_s3_uri: str | None) -> None:

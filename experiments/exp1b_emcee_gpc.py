@@ -106,6 +106,28 @@ def compute_ess_from_tau(n_steps: int, n_walkers: int, tau: float) -> float:
     return float((n_steps * n_walkers) / tau)
 
 
+def posterior_mean_prob(
+    factor: np.ndarray,
+    nu_samples: np.ndarray,
+    seed: int,
+    max_draws: int = 400,
+) -> np.ndarray:
+    """Estimate mean posterior class probabilities at observed inputs."""
+    if nu_samples.ndim != 2:
+        raise ValueError("nu_samples must have shape (n_draws, dim)")
+
+    rng = np.random.default_rng(seed)
+    n_draws = nu_samples.shape[0]
+    if n_draws > max_draws:
+        idx = rng.choice(n_draws, size=max_draws, replace=False)
+        nu_use = nu_samples[idx, :]
+    else:
+        nu_use = nu_samples
+
+    logits = factor @ nu_use.T
+    return np.mean(expit(logits), axis=1)
+
+
 def make_mala_move(
     factor: np.ndarray,
     y: np.ndarray,
@@ -264,7 +286,7 @@ def main() -> None:
     data_dir = os.path.join(PROJECT_ROOT, "data")
     os.makedirs(data_dir, exist_ok=True)
 
-    n_samples = 500
+    n_samples = 5000
     n_warmup = 200
     k_values = [10, 20, 50, 100, 200]
 
@@ -272,6 +294,7 @@ def main() -> None:
     A = KernelMatrix(X, kernel="gaussian", bandwidth=1.0)
     results = []
     trace_example = {}
+    posterior_k200 = {}
 
     for k in k_values:
         lra = arpcholesky(A, k=k, b=10)
@@ -374,6 +397,23 @@ def main() -> None:
             trace_example["RWM"] = gaussian_stats["logp_trace"]
             trace_example["MALA"] = mala_stats["logp_trace"]
             trace_example["HMC"] = hmc_stats["logp_trace"][n_warmup:]
+
+        if dim == 200:
+            posterior_k200["RWM"] = posterior_mean_prob(
+                F,
+                gaussian_stats["nu_samples"],
+                seed=4000 + k,
+            )
+            posterior_k200["MALA"] = posterior_mean_prob(
+                F,
+                mala_stats["nu_samples"],
+                seed=5000 + k,
+            )
+            posterior_k200["HMC"] = posterior_mean_prob(
+                F,
+                hmc_stats["nu_samples"],
+                seed=6000 + k,
+            )
 
     fmt = "{:<18} {:>8} {:>10} {:>8} {:>12} {:>10} {:>10} {:>8}"
     for k in k_values:
@@ -497,6 +537,74 @@ def main() -> None:
         plt.savefig(os.path.join(data_dir, "exp1b_emcee_trace_k50.png"), dpi=160)
         plt.close()
 
+    if (
+        "RWM" in posterior_k200
+        and "MALA" in posterior_k200
+        and "HMC" in posterior_k200
+    ):
+        fig = plt.figure(figsize=(14, 8))
+        gs = fig.add_gridspec(2, 4, width_ratios=[1, 1, 1, 0.06])
+
+        axes = np.empty((2, 3), dtype=object)
+        axes[0, 0] = fig.add_subplot(gs[0, 0])
+        axes[0, 1] = fig.add_subplot(gs[0, 1], sharex=axes[0, 0], sharey=axes[0, 0])
+        axes[0, 2] = fig.add_subplot(gs[0, 2], sharex=axes[0, 0], sharey=axes[0, 0])
+        axes[1, 0] = fig.add_subplot(gs[1, 0], sharex=axes[0, 0], sharey=axes[0, 0])
+        axes[1, 1] = fig.add_subplot(gs[1, 1], sharex=axes[0, 0], sharey=axes[0, 0])
+        axes[1, 2] = fig.add_subplot(gs[1, 2], sharex=axes[0, 0], sharey=axes[0, 0])
+
+        cax_top = fig.add_subplot(gs[0, 3])
+        cax_bottom = fig.add_subplot(gs[1, 3])
+        method_keys = ["RWM", "MALA", "HMC"]
+        method_titles = ["emcee RWM", "emcee MALA", "HMC"]
+
+        posterior_mappable = None
+        label_mappable = None
+        for col, (method_key, title) in enumerate(zip(method_keys, method_titles)):
+            posterior_mappable = axes[0, col].scatter(
+                X[:, 0],
+                X[:, 1],
+                c=posterior_k200[method_key],
+                cmap="viridis",
+                vmin=0.0,
+                vmax=1.0,
+                s=10,
+                alpha=0.85,
+            )
+            axes[0, col].set_title(f"{title} posterior mean p(y=1)")
+            axes[0, col].grid(alpha=0.25)
+
+            label_mappable = axes[1, col].scatter(
+                X[:, 0],
+                X[:, 1],
+                c=y,
+                cmap="coolwarm",
+                vmin=0,
+                vmax=1,
+                s=10,
+                alpha=0.85,
+            )
+            axes[1, col].set_title(f"{title} data labels")
+            axes[1, col].grid(alpha=0.25)
+
+        for row in range(2):
+            axes[row, 0].set_ylabel("x2")
+        for col in range(3):
+            axes[1, col].set_xlabel("x1")
+
+        cbar_top = fig.colorbar(posterior_mappable, cax=cax_top)
+        cbar_top.set_label("Posterior mean probability")
+        cbar_bottom = fig.colorbar(label_mappable, cax=cax_bottom, ticks=[0, 1])
+        cbar_bottom.set_label("Observed class label")
+
+        fig.suptitle("Posterior and data points by sampler at k=200", fontsize=12)
+        plt.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])
+        plt.savefig(
+            os.path.join(data_dir, "exp1b_emcee_posterior_and_data_k200.png"),
+            dpi=170,
+        )
+        plt.close()
+
     np.save(
         os.path.join(data_dir, "exp1b_emcee_results.npy"),
         {
@@ -514,6 +622,7 @@ def main() -> None:
     print("- data/exp1b_emcee_step_time_vs_k.png")
     print("- data/exp1b_emcee_accept_rate_vs_k.png")
     print("- data/exp1b_emcee_trace_k50.png")
+    print("- data/exp1b_emcee_posterior_and_data_k200.png")
     print("- data/exp1b_emcee_results.npy")
 
 

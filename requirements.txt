@@ -11,3 +11,7 @@ h5py
 Pillow
 wandb
 transformers
+torch
+torchvision
+tabpfn
+datasets
