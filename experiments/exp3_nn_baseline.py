@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from time import time
 
@@ -40,6 +41,12 @@ from my_cholesky.eval_metrics import (
     plot_reliability_diagram,
 )
 
+HG_DATASET_ROOTS = {
+    "pcam": "pcam-hg",
+    "camelyon17": "camelyon17-hg",
+    "embed": "embed",
+}
+
 
 class MLPClassifier(nn.Module):
     """2-layer MLP head for binary classification on frozen embeddings."""
@@ -60,9 +67,52 @@ class MLPClassifier(nn.Module):
 def load_embeddings(
     emb_dir: Path, dataset: str, split: str
 ) -> tuple[np.ndarray, np.ndarray]:
-    emb = np.load(emb_dir / f"{dataset}_{split}_embeddings.npy")
-    lbl = np.load(emb_dir / f"{dataset}_{split}_labels.npy")
-    return emb, lbl
+    flat_emb = emb_dir / f"{dataset}_{split}_embeddings.npy"
+    flat_lbl = emb_dir / f"{dataset}_{split}_labels.npy"
+    if flat_emb.exists() and flat_lbl.exists():
+        emb = np.load(flat_emb)
+        lbl = np.asarray(np.load(flat_lbl)).reshape(-1)
+        if emb.shape[0] != lbl.shape[0]:
+            raise ValueError(
+                f"Mismatched rows for {flat_emb.name} ({emb.shape[0]}) and "
+                f"{flat_lbl.name} ({lbl.shape[0]})."
+            )
+        return emb, lbl
+
+    hg_root_name = HG_DATASET_ROOTS.get(dataset, dataset)
+    split_dir_name = {"train": "train", "val": "valid", "test": "test"}[split]
+
+    hg_root_candidates = [emb_dir]
+    nested_candidate = emb_dir / hg_root_name
+    if nested_candidate not in hg_root_candidates:
+        hg_root_candidates.append(nested_candidate)
+
+    for hg_root in hg_root_candidates:
+        split_emb_dir = hg_root / split_dir_name / "embeddings"
+        raw_emb = split_emb_dir / "embeddings.npy"
+        projected_emb = split_emb_dir / "projected_512.npy"
+        lbl_path = split_emb_dir / "y_embeddings.npy"
+
+        # Prefer the 512-d projected embeddings when available.
+        feature_path = projected_emb if projected_emb.exists() else raw_emb
+        if feature_path.exists() and lbl_path.exists():
+            emb = np.load(feature_path)
+            lbl = np.asarray(np.load(lbl_path)).reshape(-1)
+            if emb.shape[0] != lbl.shape[0]:
+                raise ValueError(
+                    f"Mismatched rows for {feature_path} ({emb.shape[0]}) and "
+                    f"{lbl_path} ({lbl.shape[0]})."
+                )
+            return emb, lbl
+
+    raise FileNotFoundError(
+        "Could not find embeddings for "
+        f"dataset={dataset}, split={split} under {emb_dir}. "
+        "Supported layouts are flat files like "
+        f"{dataset}_{split}_embeddings.npy and Hugging Face export layouts like "
+        f"{hg_root_name}/{split_dir_name}/embeddings/(embeddings.npy|projected_512.npy) "
+        "with y_embeddings.npy."
+    )
 
 
 def make_loader(
@@ -108,6 +158,9 @@ def predict(model: nn.Module, loader: DataLoader, device: torch.device) -> np.nd
 
 
 def run_experiment(args: argparse.Namespace) -> dict:
+    experiment_start = datetime.now().astimezone()
+    experiment_start_ts = time()
+
     device = torch.device(args.device)
     emb_dir = Path(args.embedding_dir)
     out_dir = Path(args.output_dir)
@@ -138,6 +191,7 @@ def run_experiment(args: argparse.Namespace) -> dict:
     best_state = None
 
     print(f"\nTraining for up to {args.epochs} epochs (patience={args.patience})...")
+    print(f"Experiment start time: {experiment_start.isoformat(timespec='seconds')}")
     train_start = time()
 
     for epoch in range(1, args.epochs + 1):
@@ -175,17 +229,10 @@ def run_experiment(args: argparse.Namespace) -> dict:
     metrics["inference_time_sec"] = round(infer_time, 3)
     metrics["best_val_auroc"] = round(best_val_auroc, 6)
     metrics["n_train"] = int(len(train_lbl))
+    metrics["n_val"] = int(len(val_lbl))
     metrics["n_test"] = int(len(test_lbl))
 
-    print(f"\nTest metrics ({ds}):")
-    for k, v in metrics.items():
-        print(f"  {k:25s}: {v}")
-
     results_path = out_dir / f"exp3_{ds}_results.json"
-    with open(results_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"\nSaved: {results_path}")
-
     fig, _ = plot_reliability_diagram(
         test_lbl, test_probs, n_bins=15, title=f"Exp3 Reliability Diagram ({ds})"
     )
@@ -226,6 +273,22 @@ def run_experiment(args: argparse.Namespace) -> dict:
             with open(ph_path, "w") as f:
                 json.dump(per_hospital, f, indent=2)
             print(f"Saved: {ph_path}")
+
+    experiment_end = datetime.now().astimezone()
+    total_runtime = time() - experiment_start_ts
+    metrics["experiment_start_time"] = experiment_start.isoformat(timespec="seconds")
+    metrics["experiment_end_time"] = experiment_end.isoformat(timespec="seconds")
+    metrics["total_runtime_sec"] = round(total_runtime, 3)
+
+    print(f"\nTest metrics ({ds}):")
+    for k, v in metrics.items():
+        print(f"  {k:25s}: {v}")
+
+    with open(results_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"\nSaved: {results_path}")
+    print(f"Experiment end time:   {experiment_end.isoformat(timespec='seconds')}")
+    print(f"Total runtime:         {total_runtime:.2f}s")
 
     return metrics
 

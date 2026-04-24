@@ -15,7 +15,9 @@ set -euo pipefail
 export PYTHONNOUSERSITE=1
 
 # Run only experiments/exp3_nn_baseline.py.
-# This script expects embeddings to already exist under EMBEDDING_DIR.
+# If embeddings are missing, it can optionally run extract_embeddings.py first.
+# It also supports the precomputed Hugging Face export layout under
+# datasets/pcam-hg or datasets/camelyon17-hg.
 #
 # Example:
 #   sbatch --export=ALL,DATASET=pcam test.sbatch
@@ -43,9 +45,13 @@ if [ -z "${NETID}" ]; then
 fi
 
 DATASET="${DATASET:-pcam}"
+DATA_ROOT="${DATA_ROOT:-datasets}"
 EMBEDDING_DIR="${EMBEDDING_DIR:-data/embeddings}"
 OUTPUT_DIR="${OUTPUT_DIR:-data}"
 DEVICE="${DEVICE:-cuda}"
+ENCODER="${ENCODER:-densenet121}"
+EMBED_BATCH_SIZE="${EMBED_BATCH_SIZE:-256}"
+AUTO_EXTRACT="${AUTO_EXTRACT:-1}"
 HIDDEN_DIM="${HIDDEN_DIM:-256}"
 DROPOUT="${DROPOUT:-0.3}"
 LR="${LR:-1e-3}"
@@ -105,16 +111,90 @@ fi
 cd "${PROJECT_ROOT}"
 mkdir -p slurm_logs
 mkdir -p "${OUTPUT_DIR}"
+mkdir -p "${EMBEDDING_DIR}"
 
 if [ ! -f "experiments/exp3_nn_baseline.py" ]; then
   echo "ERROR: experiments/exp3_nn_baseline.py not found under ${PROJECT_ROOT}" >&2
   exit 1
 fi
 
-if [ ! -f "${EMBEDDING_DIR}/${DATASET}_train_embeddings.npy" ]; then
+if [ ! -f "experiments/extract_embeddings.py" ]; then
+  echo "ERROR: experiments/extract_embeddings.py not found under ${PROJECT_ROOT}" >&2
+  exit 1
+fi
+
+hg_dataset_root_name() {
+  case "${DATASET}" in
+    pcam) echo "pcam-hg" ;;
+    camelyon17) echo "camelyon17-hg" ;;
+    *) echo "${DATASET}" ;;
+  esac
+}
+
+have_flat_embeddings() {
+  for suffix in train_embeddings train_labels val_embeddings val_labels test_embeddings test_labels; do
+    if [ ! -f "${EMBEDDING_DIR}/${DATASET}_${suffix}.npy" ]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+have_hg_embeddings() {
+  local hg_root_name
+  local dataset_root
+  local split_dir
+  hg_root_name="$(hg_dataset_root_name)"
+  dataset_root="${EMBEDDING_DIR}"
+
+  if [ ! -d "${dataset_root}/train/embeddings" ] && [ -d "${EMBEDDING_DIR}/${hg_root_name}/train/embeddings" ]; then
+    dataset_root="${EMBEDDING_DIR}/${hg_root_name}"
+  fi
+
+  for split_dir in train valid test; do
+    if [ ! -f "${dataset_root}/${split_dir}/embeddings/y_embeddings.npy" ]; then
+      return 1
+    fi
+    if [ -f "${dataset_root}/${split_dir}/embeddings/embeddings.npy" ] || \
+       [ -f "${dataset_root}/${split_dir}/embeddings/projected_512.npy" ]; then
+      :
+    else
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+need_embeddings=0
+if ! have_flat_embeddings && ! have_hg_embeddings; then
+  need_embeddings=1
+fi
+
+if [ "${need_embeddings}" = "1" ] && [ "${AUTO_EXTRACT}" = "1" ]; then
+  echo "=============================================================================="
+  echo "[Step 1] Missing embeddings detected. Extracting ${DATASET} embeddings first."
+  echo "Data root    : ${DATA_ROOT}"
+  echo "Embed dir    : ${EMBEDDING_DIR}"
+  echo "Encoder      : ${ENCODER}"
+  echo "Embed batch  : ${EMBED_BATCH_SIZE}"
+  echo "=============================================================================="
+
+  "${PYTHON}" experiments/extract_embeddings.py \
+      --dataset "${DATASET}" \
+      --data-root "${DATA_ROOT}" \
+      --output-dir "${EMBEDDING_DIR}" \
+      --encoder "${ENCODER}" \
+      --batch-size "${EMBED_BATCH_SIZE}" \
+      --device "${DEVICE}"
+fi
+
+if ! have_flat_embeddings && ! have_hg_embeddings; then
   echo "ERROR: Missing embeddings for dataset=${DATASET} in ${EMBEDDING_DIR}" >&2
-  echo "Expected file: ${EMBEDDING_DIR}/${DATASET}_train_embeddings.npy" >&2
-  echo "Run embedding extraction first, or point EMBEDDING_DIR to an existing embedding directory." >&2
+  echo "Expected either flat files like ${EMBEDDING_DIR}/${DATASET}_train_embeddings.npy" >&2
+  echo "or a Hugging Face export layout like ${EMBEDDING_DIR}/$(hg_dataset_root_name)/train/embeddings/embeddings.npy" >&2
+  echo "with y_embeddings.npy." >&2
+  echo "Either rerun with AUTO_EXTRACT=1, or point EMBEDDING_DIR to an existing embedding directory." >&2
   exit 1
 fi
 
@@ -127,9 +207,12 @@ echo "GPU          : $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/
 echo "Project root : ${PROJECT_ROOT}"
 echo "Conda env    : ${CONDA_ENV}"
 echo "Dataset      : ${DATASET}"
+echo "Data root    : ${DATA_ROOT}"
 echo "Embed dir    : ${EMBEDDING_DIR}"
 echo "Output dir   : ${OUTPUT_DIR}"
 echo "Device       : ${DEVICE}"
+echo "Encoder      : ${ENCODER}"
+echo "Auto extract : ${AUTO_EXTRACT}"
 echo "Epochs       : ${EPOCHS}"
 echo "Batch size   : ${BATCH_SIZE}"
 echo "=============================================================================="
@@ -137,6 +220,8 @@ echo "==========================================================================
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 
+echo ""
+echo "[Step 2] Training exp3_nn_baseline.py on ${DATASET}"
 "${PYTHON}" experiments/exp3_nn_baseline.py \
     --dataset "${DATASET}" \
     --embedding-dir "${EMBEDDING_DIR}" \
