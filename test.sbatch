@@ -58,9 +58,27 @@ SEED="${SEED:-42}"
 SCRATCH_BASE="/scratch/${NETID}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
 
-module purge
-module load anaconda3/2025.06
-source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
+# Conda activation: prefer the cluster module when available, otherwise fall
+# back to a user-installed miniconda under /scratch.
+module purge || true
+
+CONDA_SH=""
+if module --ignore_cache load anaconda3/2025.06 >/dev/null 2>&1 && \
+   [ -f /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh ]; then
+  CONDA_SH="/share/apps/anaconda3/2025.06/etc/profile.d/conda.sh"
+elif [ -f "${SCRATCH_BASE}/miniconda3/etc/profile.d/conda.sh" ]; then
+  CONDA_SH="${SCRATCH_BASE}/miniconda3/etc/profile.d/conda.sh"
+elif [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
+  CONDA_SH="${HOME}/miniconda3/etc/profile.d/conda.sh"
+else
+  echo "ERROR: Could not find conda.sh." >&2
+  echo "Tried cluster module anaconda3/2025.06 and local miniconda installs under:" >&2
+  echo "  - ${SCRATCH_BASE}/miniconda3" >&2
+  echo "  - ${HOME}/miniconda3" >&2
+  exit 1
+fi
+
+source "${CONDA_SH}"
 
 export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
 set +u
