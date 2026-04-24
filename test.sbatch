@@ -21,7 +21,7 @@ export PYTHONNOUSERSITE=1
 #   sbatch --export=ALL,DATASET=pcam test.sbatch
 
 SBATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="${PROJECT_ROOT:-${SBATCH_DIR}}"
+PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-${SBATCH_DIR}}}"
 NETID="${NETID:-}"
 
 if [ -z "${NETID}" ]; then
