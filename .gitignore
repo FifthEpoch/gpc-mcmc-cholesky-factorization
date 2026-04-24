@@ -12,3 +12,4 @@ venv/
 data/
 datasets/
 data/embeddings/
+.DS_Store

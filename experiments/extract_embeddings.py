@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset
 from torchvision import models, transforms
 from tqdm import tqdm
 
@@ -78,6 +78,21 @@ def get_transform(input_size: int) -> transforms.Compose:
     ])
 
 
+class NumpyImageDataset(Dataset):
+    """Dataset wrapper that applies transforms per image on demand."""
+
+    def __init__(self, images: np.ndarray, transform: transforms.Compose):
+        self.images = images
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.images)
+
+    def __getitem__(self, idx: int) -> torch.Tensor:
+        img = torch.from_numpy(self.images[idx]).permute(2, 0, 1).float() / 255.0
+        return self.transform(img)
+
+
 @torch.no_grad()
 def extract(
     model: nn.Module,
@@ -88,14 +103,13 @@ def extract(
     feat_dim: int,
 ) -> np.ndarray:
     """Run *images* (N, H, W, C uint8) through *model* and return (N, D) features."""
-    tensor_imgs = torch.from_numpy(images).permute(0, 3, 1, 2).float() / 255.0
-    tensor_imgs = transform(tensor_imgs)
-    dataset = TensorDataset(tensor_imgs)
+    # Apply transforms lazily per image to avoid allocating a huge N x C x H x W tensor.
+    dataset = NumpyImageDataset(images, transform)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
     all_feats = np.empty((len(images), feat_dim), dtype=np.float32)
     idx = 0
-    for (batch,) in tqdm(loader, desc="Extracting", unit="batch"):
+    for batch in tqdm(loader, desc="Extracting", unit="batch"):
         batch = batch.to(device)
         feats = model(batch)
         if feats.dim() > 2:
