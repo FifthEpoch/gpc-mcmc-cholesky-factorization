@@ -54,6 +54,8 @@ MAX_VAL_SAMPLES="${MAX_VAL_SAMPLES:-0}"
 MAX_TEST_SAMPLES="${MAX_TEST_SAMPLES:-0}"
 DISABLE_STANDARDIZE="${DISABLE_STANDARDIZE:-0}"
 CONDA_ENV="${CONDA_ENV:-/scratch/${NETID}/conda-envs/gpc}"
+# Set to 0 to skip automatic pip installs (fail fast if anything is missing).
+INSTALL_SVGP_DEPS="${INSTALL_SVGP_DEPS:-1}"
 
 default_hg_embedding_dir="datasets/${DATASET}-hg"
 if [ -d "${PROJECT_ROOT}/${default_hg_embedding_dir}/train/embeddings" ]; then
@@ -150,6 +152,25 @@ PYTHON="${CONDA_PREFIX}/bin/python"
 if [ ! -x "${PYTHON}" ]; then
   echo "ERROR: Python not found at ${PYTHON}" >&2
   exit 1
+fi
+
+ensure_svgp_python_stack() {
+  if ! "${PYTHON}" -c "import torch" 2>/dev/null; then
+    echo "ERROR: PyTorch (torch) is not installed in ${CONDA_ENV}." >&2
+    echo "Install a CUDA-appropriate torch build first (see scripts/setup_env.sh)." >&2
+    exit 1
+  fi
+
+  if "${PYTHON}" -c "import gpytorch, numpy, sklearn, matplotlib" 2>/dev/null; then
+    return 0
+  fi
+
+  echo "Installing missing SVGP packages into ${CONDA_ENV} (gpytorch, numpy, scikit-learn, matplotlib) ..."
+  "${PYTHON}" -m pip install --no-cache-dir gpytorch numpy scikit-learn matplotlib
+}
+
+if [ "${INSTALL_SVGP_DEPS}" != "0" ]; then
+  ensure_svgp_python_stack
 fi
 
 "${PYTHON}" - <<'PY'

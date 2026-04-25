@@ -17,4 +17,5 @@ torch
 torchvision
 tabpfn-client
 python-dotenv
-datasets
+gpytorch
+tabpfn
