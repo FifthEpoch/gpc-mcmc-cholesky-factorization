@@ -163,6 +163,32 @@ def print_metric_table(metrics, title="Metrics"):
             print(f"{key:32s}: {value}")
 
 
+def print_posterior_statistics(latent_mean, latent_var, prob_mean, prob_var=None, title="Posterior Statistics"):
+    """Print summary statistics of posterior distributions."""
+    print(f"\n{title}")
+    print("-" * len(title))
+    
+    latent_mean = np.asarray(latent_mean)
+    latent_var = np.asarray(latent_var)
+    prob_mean = np.asarray(prob_mean)
+    
+    latent_std = np.sqrt(latent_var)
+    
+    print(f"Latent function posterior:")
+    print(f"  Mean: min={np.min(latent_mean):.6f}, mean={np.mean(latent_mean):.6f}, max={np.max(latent_mean):.6f}, std={np.std(latent_mean):.6f}")
+    print(f"  Std:  min={np.min(latent_std):.6f}, mean={np.mean(latent_std):.6f}, max={np.max(latent_std):.6f}")
+    print(f"  Var:  min={np.min(latent_var):.6f}, mean={np.mean(latent_var):.6f}, max={np.max(latent_var):.6f}")
+    
+    print(f"Predictive probability posterior:")
+    print(f"  Mean: min={np.min(prob_mean):.6f}, mean={np.mean(prob_mean):.6f}, max={np.max(prob_mean):.6f}, std={np.std(prob_mean):.6f}")
+    
+    if prob_var is not None:
+        prob_var = np.asarray(prob_var)
+        prob_std = np.sqrt(prob_var)
+        print(f"  Std:  min={np.min(prob_std):.6f}, mean={np.mean(prob_std):.6f}, max={np.max(prob_std):.6f}")
+        print(f"  Var:  min={np.min(prob_var):.6f}, mean={np.mean(prob_var):.6f}, max={np.max(prob_var):.6f}")
+
+
 def compare_against_reference(reference, candidate):
     out = {}
     for name in [

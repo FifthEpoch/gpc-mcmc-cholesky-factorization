@@ -28,13 +28,13 @@ if PROJECT_ROOT not in sys.path:
 from predictive_metrics import (
     evaluate_binary_probabilistic_predictions,
     print_metric_table,
+    print_posterior_statistics,
 )
 
 
-def make_fake_blobs(seed: int = 42):
-    """Generate N=2000 two-blob binary data in R^2."""
+def make_fake_blobs(seed: int = 42, n_per_class: int = 1000):
+    """Generate N=2*n_per_class two-blob binary data in R^2."""
     rng = np.random.default_rng(seed)
-    n_per_class = 1000
     cov = 0.5 * np.eye(2)
     x0 = rng.multivariate_normal(mean=[-1.0, 0.0], cov=cov, size=n_per_class)
     x1 = rng.multivariate_normal(mean=[1.0, 0.0], cov=cov, size=n_per_class)
@@ -99,6 +99,7 @@ def fit_predict_method(
 
     t0 = time.perf_counter()
     model.getPosterior(X, y_pm1)
+    fit_time = time.perf_counter() - t0
 
     # pyGPs predict convention:
     # ym  : predictive mean of observed output / class probability-like output
@@ -106,8 +107,9 @@ def fit_predict_method(
     # fm  : latent predictive mean
     # fs2 : latent predictive variance
     # lp  : log predictive probability
+    t_pred = time.perf_counter()
     ym, ys2, fm, fs2, lp = model.predict(X_grid)
-    elapsed = time.perf_counter() - t0
+    pred_time = time.perf_counter() - t_pred
 
     ym = np.asarray(ym, dtype=float).reshape(-1)
     ys2 = np.asarray(ys2, dtype=float).reshape(-1)
@@ -119,7 +121,8 @@ def fit_predict_method(
     prob = np.clip(ym, 0.0, 1.0)
 
     return {
-        "fit_predict_time": float(elapsed),
+        "fit_time": float(fit_time),
+        "pred_time": float(pred_time),
         "prob": prob,
         "y_var": ys2,
         "latent_mean": fm,
@@ -167,8 +170,8 @@ def main() -> None:
 
     pygp = _import_pygp()
 
-    X, y = make_fake_blobs(seed=42)
-    X_test_labeled, y_test = make_fake_blobs(seed=123)
+    X, y = make_fake_blobs(seed=42, n_per_class=1000)
+    X_test_labeled, y_test = make_fake_blobs(seed=123, n_per_class=500)
 
     x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
     y_min, y_max = X[:, 1].min() - 0.5, X[:, 1].max() + 0.5
@@ -183,18 +186,29 @@ def main() -> None:
 
     print("Running pyGPs methods:", ", ".join(methods))
     for method in methods:
+        t_fit_start = time.perf_counter()
         results[method] = fit_predict_method(pygp, X, y, X_grid, method)
+        t_fit_elapsed = time.perf_counter() - t_fit_start
+        print(f"  {method}: fit time={results[method]['fit_time']:.3f}s, predict (grid) time={results[method]['pred_time']:.3f}s")
+        
         test_results = fit_predict_method(pygp, X, y, X_test_labeled, method)
         results[method]["prob_test"] = test_results["prob"]
         results[method]["latent_mean_test"] = test_results["latent_mean"]
         results[method]["latent_var_test"] = test_results["latent_var"]
+        print(f"  {method}: predict (test) time={test_results['pred_time']:.3f}s")
+        
         results[method]["test_metrics"] = evaluate_binary_probabilistic_predictions(
             y_true=y_test,
             p_pred=results[method]["prob_test"],
             threshold=0.5,
             n_bins=15,
         )
-        print(f"  {method}: fit+predict={results[method]['fit_predict_time']:.3f}s")
+        print_posterior_statistics(
+            latent_mean=results[method]["latent_mean_test"],
+            latent_var=results[method]["latent_var_test"],
+            prob_mean=results[method]["prob_test"],
+            title=f"pyGPs {method} test set posterior statistics",
+        )
         print_metric_table(results[method]["test_metrics"], title=f"pyGPs {method} test metrics")
 
     # ------------------------------------------------------------
@@ -249,7 +263,8 @@ def main() -> None:
         os.path.join(data_dir, "exp1_pygp_la_ep_results.npy"),
         {
             "methods": methods,
-            "fit_predict_time": {m: results[m]["fit_predict_time"] for m in methods},
+            "fit_time": {m: results[m]["fit_time"] for m in methods},
+            "pred_time_grid": {m: results[m]["pred_time"] for m in methods},
             "results": results,
             "y_test": y_test,
         },
