@@ -1,0 +1,45 @@
+#!binbash
+
+#SBATCH --account=csci_ga_2565-2026sp
+#SBATCH --partition=cpu
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=8
+#SBATCH --time=80000
+#SBATCH --mem=64GB
+#SBATCH --job-name=exp2_pcam_full
+#SBATCH --output=logsexp2_%j.out
+#SBATCH --error=logsexp2_%j.err
+
+module purge
+
+# Limit BLAS threads to match cpus-per-task to avoid oversubscription
+export OMP_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export OPENBLAS_NUM_THREADS=8
+
+cd scratchNetIDgpc-mcmc-cholesky-factorization
+
+singularity exec 
+    --overlay scratchNetIDpytorch-examplemy_pytorch.ext3ro 
+    scratchworkpublicsingularitycuda11.3.0-cudnn8-devel-ubuntu20.04.sif 
+    binbash -c 
+        source ext3env.sh
+        
+        # Build the factor on full PCam training set
+        python experimentsexp_rpcholesky_embeddings.py 
+            --embeddings datasetspcam_train_embedding.npy 
+            --labels datasetspcam_train_label.npy 
+            --k-values 200 
+            --output-dir datarpchol_full 
+            --bandwidth approx_median
+        
+        # Run prediction
+        python experimentsexp2.py 
+            --factor-dir datarpchol_full 
+            --test-embeddings datasetspcam_test_embedding.npy 
+            --test-labels datasetspcam_test_label.npy 
+            --k 200 
+            --n-samples 2000 
+            --n-warmup 500
+    

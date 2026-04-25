@@ -88,6 +88,7 @@ def run_rank(A: KernelMatrix, k: int, b: int, stoptol: float) -> dict:
     elapsed = time.perf_counter() - t0
 
     F = lra.get_left_factor()          # shape (N, k_actual)
+    pivots = lra.get_indices()
     k_actual = F.shape[1]
     n = A.shape[0]
 
@@ -115,7 +116,7 @@ def run_rank(A: KernelMatrix, k: int, b: int, stoptol: float) -> dict:
     print(f"  kernel entries queried: {stats['kernel_queries']:,}  "
           f"(vs {n*n:,} for full matrix)")
 
-    return {"factor": F, "stats": stats}
+    return {"factor": F, "pivots": pivots, "stats": stats}
 
 
 def main() -> None:
@@ -137,6 +138,7 @@ def main() -> None:
     for k in args.k_values:
         result = run_rank(A, k=k, b=args.block_size, stoptol=args.stoptol)
         F = result["factor"]
+        pivots = result["pivots"]
         stats = result["stats"]
 
         # Save the factor for this rank
@@ -146,13 +148,22 @@ def main() -> None:
         stats["factor_bytes"] = int(F.nbytes)
         print(f"  saved factor: {factor_path}  ({F.nbytes/1e6:.1f} MB)")
 
+        pivots_path = out_dir / f"pivots_k{stats['k_actual']}.npy"
+        np.save(pivots_path, pivots.astype(np.int64))
+        stats["pivots_path"] = str(pivots_path)
+        print(f"  saved pivots: {pivots_path}")
+
         all_stats.append(stats)
 
-    # 4. Save labels alongside factors so downstream MCMC can load both easily
+    # 4. Save embeddings and labels alongside factors so downstream MCMC can load both easily
+    emb_out = out_dir / "embeddings.npy"
+    np.save(emb_out, X.astype(np.float32, copy=False))
+    print(f"\nSaved embeddings: {emb_out}")
+
     if y is not None:
         lbl_out = out_dir / "labels.npy"
         np.save(lbl_out, y)
-        print(f"\nSaved labels: {lbl_out}")
+        print(f"Saved labels: {lbl_out}")
 
     # 5. Save summary JSON
     summary = {
