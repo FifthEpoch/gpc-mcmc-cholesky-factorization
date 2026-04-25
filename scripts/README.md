@@ -63,7 +63,8 @@ Two-step GPU job: (1) extract frozen DenseNet-121 embeddings, then (2) train a
 2-layer MLP classifier on the embeddings.
 
 ```bash
-sbatch --export=ALL,NETID=ab1234,DATASET=pcam scripts/exp3_nn_baseline.sbatch
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
+       scripts/exp3_nn_baseline.sbatch
 ```
 
 | Variable       | Default        | Description                                      |
@@ -72,6 +73,7 @@ sbatch --export=ALL,NETID=ab1234,DATASET=pcam scripts/exp3_nn_baseline.sbatch
 | `DATASET`      | `pcam`         | `pcam`, `camelyon17`, or `embed`                 |
 | `ENCODER`      | `densenet121`  | `densenet121` or `dinov2_vitl14`                 |
 | `SKIP_EMBED`   | `0`            | Set to `1` to skip embedding extraction          |
+| `EMBEDDING_DIR`| `data/embeddings` | Embedding root (project format or partner HG layout) |
 | `CONDA_ENV`    | auto-detected  | Override conda env path                          |
 | `PROJECT_ROOT` | auto-detected  | Override project directory                       |
 
@@ -79,14 +81,20 @@ sbatch --export=ALL,NETID=ab1234,DATASET=pcam scripts/exp3_nn_baseline.sbatch
 
 ```bash
 # Run on PCam with default encoder
-sbatch --export=ALL,NETID=ab1234,DATASET=pcam scripts/exp3_nn_baseline.sbatch
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
+       scripts/exp3_nn_baseline.sbatch
 
 # Run on CAMELYON17 with DINOv2 encoder
-sbatch --export=ALL,NETID=ab1234,DATASET=camelyon17,ENCODER=dinov2_vitl14 \
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=camelyon17,ENCODER=dinov2_vitl14 \
        scripts/exp3_nn_baseline.sbatch
 
 # Reuse existing embeddings (skip extraction step)
-sbatch --export=ALL,NETID=ab1234,DATASET=pcam,SKIP_EMBED=1 \
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam,SKIP_EMBED=1 \
+       scripts/exp3_nn_baseline.sbatch
+
+# Use partner embeddings (HG layout) for Exp3; skip extraction
+sbatch --account=torch_pr_xxx_yyy \
+       --export=ALL,NETID=ab1234,DATASET=pcam,SKIP_EMBED=1,EMBEDDING_DIR=/scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets \
        scripts/exp3_nn_baseline.sbatch
 ```
 
@@ -102,7 +110,8 @@ run Experiment 3 first** (or at least the embedding extraction step) so that
 `data/embeddings/` is populated.
 
 ```bash
-sbatch --export=ALL,NETID=ab1234,DATASET=pcam scripts/exp4_tabpfn_baseline.sbatch
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
+       scripts/exp4_tabpfn_baseline.sbatch
 ```
 
 | Variable             | Default        | Description                                       |
@@ -110,6 +119,7 @@ sbatch --export=ALL,NETID=ab1234,DATASET=pcam scripts/exp4_tabpfn_baseline.sbatc
 | `NETID`              | *(required)*   | Your cluster NetID                                |
 | `DATASET`            | `pcam`         | `pcam`, `camelyon17`, or `embed`                  |
 | `MAX_TRAIN_SAMPLES`  | `50000`        | Subsample training set to this size for TabPFN    |
+| `EMBEDDING_DIR`      | `data/embeddings` | Embedding root (project format or partner HG layout) |
 | `CONDA_ENV`          | auto-detected  | Override conda env path                           |
 | `PROJECT_ROOT`       | auto-detected  | Override project directory                        |
 
@@ -117,10 +127,16 @@ sbatch --export=ALL,NETID=ab1234,DATASET=pcam scripts/exp4_tabpfn_baseline.sbatc
 
 ```bash
 # Run on PCam (default 50K train subsample)
-sbatch --export=ALL,NETID=ab1234,DATASET=pcam scripts/exp4_tabpfn_baseline.sbatch
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
+       scripts/exp4_tabpfn_baseline.sbatch
 
 # Run on CAMELYON17 with larger train subsample
-sbatch --export=ALL,NETID=ab1234,DATASET=camelyon17,MAX_TRAIN_SAMPLES=100000 \
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=camelyon17,MAX_TRAIN_SAMPLES=100000 \
+       scripts/exp4_tabpfn_baseline.sbatch
+
+# Use partner embeddings (HG layout) for Exp4
+sbatch --account=torch_pr_xxx_yyy \
+       --export=ALL,NETID=ab1234,DATASET=camelyon17,EMBEDDING_DIR=/scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets \
        scripts/exp4_tabpfn_baseline.sbatch
 ```
 
@@ -135,17 +151,49 @@ Run all three datasets through the full pipeline:
 
 ```bash
 # Step 1: Extract embeddings + train NN for each dataset
-sbatch --export=ALL,NETID=ab1234,DATASET=pcam       scripts/exp3_nn_baseline.sbatch
-sbatch --export=ALL,NETID=ab1234,DATASET=camelyon17  scripts/exp3_nn_baseline.sbatch
-sbatch --export=ALL,NETID=ab1234,DATASET=embed       scripts/exp3_nn_baseline.sbatch
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam       scripts/exp3_nn_baseline.sbatch
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=camelyon17  scripts/exp3_nn_baseline.sbatch
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=embed       scripts/exp3_nn_baseline.sbatch
 
 # Step 2: After Exp3 jobs complete, run TabPFN on the same embeddings
-sbatch --export=ALL,NETID=ab1234,DATASET=pcam        scripts/exp4_tabpfn_baseline.sbatch
-sbatch --export=ALL,NETID=ab1234,DATASET=camelyon17  scripts/exp4_tabpfn_baseline.sbatch
-sbatch --export=ALL,NETID=ab1234,DATASET=embed       scripts/exp4_tabpfn_baseline.sbatch
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam        scripts/exp4_tabpfn_baseline.sbatch
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=camelyon17  scripts/exp4_tabpfn_baseline.sbatch
+sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=embed       scripts/exp4_tabpfn_baseline.sbatch
 ```
 
 Use `squeue -u $USER` to monitor job status and check `slurm_logs/` for output.
+
+---
+
+## Embedding formats supported by Exp3/Exp4
+
+Both `exp3_nn_baseline.py` and `exp4_tabpfn_baseline.py` can load either format:
+
+1) **Project-native format** (generated by `extract_embeddings.py`)
+
+```text
+<EMBEDDING_DIR>/pcam_train_embeddings.npy
+<EMBEDDING_DIR>/pcam_train_labels.npy
+<EMBEDDING_DIR>/pcam_val_embeddings.npy
+<EMBEDDING_DIR>/pcam_val_labels.npy
+<EMBEDDING_DIR>/pcam_test_embeddings.npy
+<EMBEDDING_DIR>/pcam_test_labels.npy
+```
+
+2) **Partner HG layout**
+
+```text
+<EMBEDDING_DIR>/pcam-hg/train/embeddings/projected_512.npy
+<EMBEDDING_DIR>/pcam-hg/train/embeddings/y_embeddings.npy
+<EMBEDDING_DIR>/pcam-hg/valid/embeddings/projected_512.npy
+<EMBEDDING_DIR>/pcam-hg/test/embeddings/projected_512.npy
+```
+
+Notes:
+- For HG layout, labels are loaded from `y_embeddings.npy` if present, otherwise
+  from `<split>/labels.csv`.
+- `val` in code maps to `valid` in the HG directory naming.
+- For Exp3 with partner embeddings, set `SKIP_EMBED=1` so the extraction stage is skipped.
 
 ---
 
@@ -182,5 +230,5 @@ srun --jobid=<JOBID> nvidia-smi
 | `setup_env.sh`                        | Creates conda env and installs dependencies          |
 | `download_datasets.py`               | Downloads PCam, CAMELYON17-WILDS, EMBED              |
 | `exp0_algorithm_verification.sbatch`  | SLURM template for RPCholesky benchmark (CPU)        |
-| `exp3_nn_baseline.sbatch`             | SLURM template for NN baseline (GPU, H200)           |
-| `exp4_tabpfn_baseline.sbatch`         | SLURM template for TabPFN baseline (GPU, H200)       |
+| `exp3_nn_baseline.sbatch`             | SLURM template for NN baseline (1 GPU)               |
+| `exp4_tabpfn_baseline.sbatch`         | SLURM template for TabPFN baseline (1 GPU)           |

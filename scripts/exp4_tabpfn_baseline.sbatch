@@ -21,6 +21,7 @@ export PYTHONNOUSERSITE=1
 # Optional overrides:
 #   DATASET              pcam | camelyon17 | embed     (default: pcam)
 #   MAX_TRAIN_SAMPLES    int                           (default: 50000)
+#   EMBEDDING_DIR        path to embedding root         (default: data/embeddings)
 #   CONDA_ENV            /path/to/env                  (auto-detected)
 #   PROJECT_ROOT         /path/to/project              (auto-detected)
 
@@ -32,6 +33,7 @@ fi
 
 DATASET="${DATASET:-pcam}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-50000}"
+EMBEDDING_DIR="${EMBEDDING_DIR:-data/embeddings}"
 
 SCRATCH_BASE="/scratch/${NETID}"
 PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
@@ -116,7 +118,7 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 
 "${PYTHON}" experiments/exp4_tabpfn_baseline.py \
     --dataset "${DATASET}" \
-    --embedding-dir data/embeddings \
+    --embedding-dir "${EMBEDDING_DIR}" \
     --output-dir data \
     --max-train-samples "${MAX_TRAIN_SAMPLES}" \
     --device cuda
