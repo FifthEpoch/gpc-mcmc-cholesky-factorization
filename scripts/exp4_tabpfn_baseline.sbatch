@@ -91,6 +91,7 @@ unset PYTHONPATH
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 export TABPFN_DISABLE_TELEMETRY=1
+export TABPFN_TOKEN="${TABPFN_TOKEN:-}"
 
 PYTHON="${CONDA_PREFIX}/bin/python"
 if [ ! -x "${PYTHON}" ]; then
@@ -128,6 +129,12 @@ fi
   echo "ERROR: TabPFN import check failed. Install it in ${CONDA_ENV}." >&2
   exit 1
 }
+
+if [ -z "${TABPFN_TOKEN}" ]; then
+  echo "WARN: TABPFN_TOKEN is not set." >&2
+  echo "WARN: If TabPFN model weights are not already cached, this job will fail." >&2
+  echo "WARN: Set it at submit time with --export=ALL,TABPFN_TOKEN=<your-token>,DATASET=${DATASET}" >&2
+fi
 
 have_flat_embeddings() {
   for suffix in train_embeddings train_labels val_embeddings val_labels test_embeddings test_labels; do
@@ -188,6 +195,7 @@ echo "Device            : ${DEVICE}"
 echo "Max train samples : ${MAX_TRAIN_SAMPLES}"
 echo "Predict chunk     : ${PREDICT_CHUNK_SIZE}"
 echo "Seed              : ${SEED}"
+echo "Token set         : $( [ -n "${TABPFN_TOKEN}" ] && echo yes || echo no )"
 echo "=============================================================================="
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
