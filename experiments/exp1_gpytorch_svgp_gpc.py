@@ -230,9 +230,9 @@ def make_loader(
 class SVGPBinaryClassifier:  # type: ignore[misc]
     """Thin wrapper so gpytorch stays injected instead of global."""
 
-    def __new__(cls, gpytorch, inducing_points):
+    def __new__(cls, gpytorch, inducing_points, input_dim: int, use_ard: bool = False):
         class _Model(gpytorch.models.ApproximateGP):
-            def __init__(self, inducing_points_):
+            def __init__(self, inducing_points_, input_dim_: int, use_ard_: bool):
                 variational_distribution = (
                     gpytorch.variational.CholeskyVariationalDistribution(
                         inducing_points_.size(0)
@@ -246,8 +246,33 @@ class SVGPBinaryClassifier:  # type: ignore[misc]
                 )
                 super().__init__(variational_strategy)
                 self.mean_module = gpytorch.means.ConstantMean()
-                self.covar_module = gpytorch.kernels.ScaleKernel(
-                    gpytorch.kernels.RBFKernel()
+                dtype = inducing_points_.dtype
+                ls_init = float(np.sqrt(float(input_dim_)))
+
+                if use_ard_:
+                    self.covar_module = gpytorch.kernels.ScaleKernel(
+                        gpytorch.kernels.RBFKernel(ard_num_dims=int(input_dim_))
+                    )
+                    init_ls = inducing_points_.new_full(
+                        (1, int(input_dim_)),
+                        ls_init,
+                        dtype=dtype,
+                    )
+                    self.covar_module.base_kernel.initialize(lengthscale=init_ls)
+                else:
+                    self.covar_module = gpytorch.kernels.ScaleKernel(
+                        gpytorch.kernels.RBFKernel()
+                    )
+                    self.covar_module.base_kernel.initialize(
+                        lengthscale=inducing_points_.new_tensor(
+                            [ls_init], dtype=dtype
+                        )
+                    )
+
+                self.covar_module.initialize(
+                    outputscale=inducing_points_.new_tensor(
+                        [1.0], dtype=dtype
+                    )
                 )
 
             def forward(self, x):
@@ -255,7 +280,7 @@ class SVGPBinaryClassifier:  # type: ignore[misc]
                 covar_x = self.covar_module(x)
                 return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
-        return _Model(inducing_points)
+        return _Model(inducing_points, input_dim, use_ard)
 
 
 def train_one_epoch(
@@ -358,6 +383,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable train-set feature standardization.",
     )
+    parser.add_argument(
+        "--rbf-ard",
+        action="store_true",
+        help=(
+            "Use an ARD RBF kernel (one lengthscale per dimension). "
+            "Default is isotropic RBF with lengthscale sqrt(D) and outputscale 1."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -413,6 +446,10 @@ def main() -> None:
         f"  train: {train_X.shape[0]}  val: {val_X.shape[0]}  test: {test_X.shape[0]}"
     )
     print(f"  feature dim: {input_dim}")
+    print(
+        f"  RBF kernel: {'ARD' if args.rbf_ard else 'isotropic'}; "
+        f"lengthscale init sqrt(D)={np.sqrt(float(input_dim)):.4f}; outputscale=1.0"
+    )
     print(f"  num inducing: {num_inducing}")
     print(f"  train batch size: {args.batch_size}")
     print(f"  predict batch size: {args.predict_batch_size}")
@@ -427,7 +464,9 @@ def main() -> None:
         torch, test_X, test_y, args.predict_batch_size, shuffle=False, device=device
     )
 
-    model = SVGPBinaryClassifier(gpytorch, inducing_points).to(device)
+    model = SVGPBinaryClassifier(
+        gpytorch, inducing_points, input_dim, use_ard=args.rbf_ard
+    ).to(device)
     likelihood = gpytorch.likelihoods.BernoulliLikelihood().to(device)
 
     optimizer = torch.optim.Adam(
