@@ -77,6 +77,8 @@ def load_embeddings(
                 f"Mismatched rows for {flat_emb.name} ({emb.shape[0]}) and "
                 f"{flat_lbl.name} ({lbl.shape[0]})."
             )
+        print(f"[load_embeddings] {dataset}:{split} features <- {flat_emb}")
+        print(f"[load_embeddings] {dataset}:{split} labels   <- {flat_lbl}")
         return emb, lbl
 
     hg_root_name = HG_DATASET_ROOTS.get(dataset, dataset)
@@ -103,6 +105,8 @@ def load_embeddings(
                     f"Mismatched rows for {feature_path} ({emb.shape[0]}) and "
                     f"{lbl_path} ({lbl.shape[0]})."
                 )
+            print(f"[load_embeddings] {dataset}:{split} features <- {feature_path}")
+            print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_path}")
             return emb, lbl
 
     raise FileNotFoundError(

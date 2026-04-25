@@ -46,12 +46,12 @@ fi
 
 DATASET="${DATASET:-pcam}"
 DATA_ROOT="${DATA_ROOT:-datasets}"
-EMBEDDING_DIR="${EMBEDDING_DIR:-data/embeddings}"
+EMBEDDING_DIR="${EMBEDDING_DIR:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-data}"
 DEVICE="${DEVICE:-cuda}"
 ENCODER="${ENCODER:-densenet121}"
 EMBED_BATCH_SIZE="${EMBED_BATCH_SIZE:-256}"
-AUTO_EXTRACT="${AUTO_EXTRACT:-1}"
+AUTO_EXTRACT="${AUTO_EXTRACT:-}"
 HIDDEN_DIM="${HIDDEN_DIM:-256}"
 DROPOUT="${DROPOUT:-0.3}"
 LR="${LR:-1e-3}"
@@ -130,6 +130,24 @@ hg_dataset_root_name() {
     *) echo "${DATASET}" ;;
   esac
 }
+
+default_hg_embedding_dir="${DATA_ROOT}/$(hg_dataset_root_name)"
+if [ -z "${EMBEDDING_DIR}" ]; then
+  if [ -d "${default_hg_embedding_dir}/train/embeddings" ]; then
+    EMBEDDING_DIR="${default_hg_embedding_dir}"
+  else
+    EMBEDDING_DIR="data/embeddings"
+  fi
+fi
+
+if [ -z "${AUTO_EXTRACT}" ]; then
+  if [ "${EMBEDDING_DIR}" = "${default_hg_embedding_dir}" ] && \
+     [ -d "${default_hg_embedding_dir}/train/embeddings" ]; then
+    AUTO_EXTRACT=0
+  else
+    AUTO_EXTRACT=1
+  fi
+fi
 
 have_flat_embeddings() {
   for suffix in train_embeddings train_labels val_embeddings val_labels test_embeddings test_labels; do
