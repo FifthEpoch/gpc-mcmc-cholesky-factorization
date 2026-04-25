@@ -14,6 +14,20 @@ Usage:
         --dataset pcam \
         --embedding-dir data/embeddings \
         --device cuda
+
+Gated TabPFN model weights (TabPFN 2.5+): get a token from
+https://ux.priorlabs.ai (License tab), then either:
+
+- ``export TABPFN_TOKEN=<token>`` before running, or
+- put the token in a file (e.g. under ``/scratch``) and
+  ``export TABPFN_TOKEN_FILE=/path/to/file`` (this script loads it if
+  ``TABPFN_TOKEN`` is unset).   For local runs, copy ``.env.example`` to ``.env`` and set
+  ``TABPFN_TOKEN=...``; the script loads the project
+  root ``.env`` automatically (``python-dotenv``; does not override variables
+  already set in the shell). TabPFN reads other settings from the environment too.
+
+For clusters, set ``TABPFN_NO_BROWSER=1`` and use ``TABPFN_TOKEN`` or
+``TABPFN_TOKEN_FILE`` (do not put secrets in the job script or git).
 """
 
 from __future__ import annotations
@@ -30,9 +44,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from dotenv import load_dotenv
 from sklearn.metrics import roc_curve
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Load .env from project root (gitignored). Does not override existing env vars.
+load_dotenv(Path(PROJECT_ROOT) / ".env")
 SRC_PATH = os.path.join(PROJECT_ROOT, "src")
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
@@ -41,6 +58,25 @@ from my_cholesky.eval_metrics import (
     compute_all_metrics,
     plot_reliability_diagram,
 )
+
+
+def _load_tabpfn_token_from_file() -> None:
+    """If TABPFN_TOKEN is empty, set it from the path in TABPFN_TOKEN_FILE."""
+    if os.environ.get("TABPFN_TOKEN", "").strip():
+        return
+    path = (os.environ.get("TABPFN_TOKEN_FILE") or "").strip()
+    if not path:
+        return
+    token_path = Path(path).expanduser()
+    if not token_path.is_file():
+        print(
+            f"WARN: TABPFN_TOKEN_FILE is set but not a file: {token_path}",
+            file=sys.stderr,
+        )
+        return
+    token = token_path.read_text(encoding="utf-8").strip()
+    if token:
+        os.environ["TABPFN_TOKEN"] = token
 
 
 def load_embeddings(
@@ -187,6 +223,7 @@ def confusion_counts_rates(
 
 
 def run_experiment(args: argparse.Namespace) -> dict:
+    _load_tabpfn_token_from_file()
     from tabpfn import TabPFNClassifier
 
     emb_dir = Path(args.embedding_dir)

@@ -91,7 +91,14 @@ unset PYTHONPATH
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 export TABPFN_DISABLE_TELEMETRY=1
+# Headless: do not try to open a browser for PriorLabs login on compute nodes.
+export TABPFN_NO_BROWSER="${TABPFN_NO_BROWSER:-1}"
 export TABPFN_TOKEN="${TABPFN_TOKEN:-}"
+# Optional: path to a one-line token file (keeps secrets out of --export=...), e.g.
+#   echo "$TABPFN_TOKEN" > /scratch/${NETID}/.tabpfn_token
+#   chmod 600 /scratch/${NETID}/.tabpfn_token
+#   export TABPFN_TOKEN_FILE=/scratch/${NETID}/.tabpfn_token
+export TABPFN_TOKEN_FILE="${TABPFN_TOKEN_FILE:-}"
 
 PYTHON="${CONDA_PREFIX}/bin/python"
 if [ ! -x "${PYTHON}" ]; then
@@ -130,10 +137,12 @@ fi
   exit 1
 }
 
-if [ -z "${TABPFN_TOKEN}" ]; then
-  echo "WARN: TABPFN_TOKEN is not set." >&2
+if [ -z "${TABPFN_TOKEN}" ] && [ -z "${TABPFN_TOKEN_FILE}" ]; then
+  echo "WARN: Neither TABPFN_TOKEN nor TABPFN_TOKEN_FILE is set." >&2
   echo "WARN: If TabPFN model weights are not already cached, this job will fail." >&2
-  echo "WARN: Set it at submit time with --export=ALL,TABPFN_TOKEN=<your-token>,DATASET=${DATASET}" >&2
+  echo "WARN: Get a token from https://ux.priorlabs.ai (License tab), then either:" >&2
+  echo "WARN:   --export=ALL,NETID=${NETID},TABPFN_TOKEN=<token>,DATASET=${DATASET}" >&2
+  echo "WARN: or put the token in a file and set TABPFN_TOKEN_FILE (see script header)." >&2
 fi
 
 have_flat_embeddings() {
