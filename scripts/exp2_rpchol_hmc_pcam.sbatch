@@ -8,8 +8,8 @@
 #SBATCH --time=08:00:00
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:a100:1
-#SBATCH --output=slurm_logs/%x_%j.out
-#SBATCH --error=slurm_logs/%x_%j.err
+#SBATCH --output=slurm_logs/hmc_rose/%x_%j.out
+#SBATCH --error=slurm_logs/hmc_rose/%x_%j.err
 
 set -euo pipefail
 export PYTHONNOUSERSITE=1
@@ -85,6 +85,7 @@ fi
 
 cd "${PROJECT_ROOT}"
 mkdir -p slurm_logs
+mkdir -p slurm_logs/hmc_rose
 mkdir -p "${FACTOR_DIR}"
 mkdir -p "${EXP2_OUTPUT_DIR}"
 
