@@ -1,5 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=exp4_tabpfn
+#SBATCH --account=csci_ga_2565-2026sp
+#SBATCH --partition=c12m85-a100-1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
@@ -12,51 +14,67 @@
 set -euo pipefail
 export PYTHONNOUSERSITE=1
 
-# =============================================================================
-# User-configurable paths
-# =============================================================================
-# Submit with:
-#   sbatch --export=ALL,NETID=ab1234 scripts/exp4_tabpfn_baseline.sbatch
+# Run Experiment 4 (TabPFN) on existing embeddings.
+# By default, if datasets/<dataset>-hg exists, use that embedding root and
+# therefore prefer projected_512.npy when available.
 #
-# Optional overrides:
-#   DATASET              pcam | camelyon17 | embed     (default: pcam)
-#   MAX_TRAIN_SAMPLES    int                           (default: 50000)
-#   EMBEDDING_DIR        path to embedding root         (default: data/embeddings)
-#   CONDA_ENV            /path/to/env                  (auto-detected)
-#   PROJECT_ROOT         /path/to/project              (auto-detected)
+# Example:
+#   sbatch --export=ALL,DATASET=pcam scripts/exp4_tabpfn_baseline.sbatch
 
-NETID="${NETID:-<netid>}"
-if [ "${NETID}" = "<netid>" ]; then
-  echo "ERROR: NETID is required. Submit with --export=ALL,NETID=<your-netid>." >&2
+SBATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$(cd "${SBATCH_DIR}/.." && pwd)}}"
+NETID="${NETID:-}"
+
+if [ -z "${NETID}" ]; then
+  case "${PROJECT_ROOT}" in
+    /scratch/*/*)
+      NETID="${PROJECT_ROOT#/scratch/}"
+      NETID="${NETID%%/*}"
+      ;;
+    *)
+      NETID="${USER:-}"
+      ;;
+  esac
+fi
+
+if [ -z "${NETID}" ]; then
+  echo "ERROR: NETID could not be determined." >&2
+  echo "Submit with --export=ALL,NETID=<your-netid> if auto-detection fails." >&2
   exit 1
 fi
 
 DATASET="${DATASET:-pcam}"
+DATA_ROOT="${DATA_ROOT:-datasets}"
+EMBEDDING_DIR="${EMBEDDING_DIR:-}"
+OUTPUT_DIR="${OUTPUT_DIR:-data}"
+DEVICE="${DEVICE:-cuda}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-50000}"
-EMBEDDING_DIR="${EMBEDDING_DIR:-data/embeddings}"
+PREDICT_CHUNK_SIZE="${PREDICT_CHUNK_SIZE:-1000}"
+SEED="${SEED:-42}"
 
 SCRATCH_BASE="/scratch/${NETID}"
-PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
 
-# =============================================================================
-# Load scratch environment (caches, tmp dirs, etc.)
-# =============================================================================
-SCRIPT_DIR="${PROJECT_ROOT}/scripts"
-if [ -f "${SCRIPT_DIR}/set_scratch_env.sh" ]; then
-  source "${SCRIPT_DIR}/set_scratch_env.sh"
+module purge || true
+
+CONDA_SH=""
+if module --ignore_cache load anaconda3/2025.06 >/dev/null 2>&1 && \
+   [ -f /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh ]; then
+  CONDA_SH="/share/apps/anaconda3/2025.06/etc/profile.d/conda.sh"
+elif [ -f "${SCRATCH_BASE}/miniconda3/etc/profile.d/conda.sh" ]; then
+  CONDA_SH="${SCRATCH_BASE}/miniconda3/etc/profile.d/conda.sh"
+elif [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
+  CONDA_SH="${HOME}/miniconda3/etc/profile.d/conda.sh"
 else
-  echo "WARN: set_scratch_env.sh not found, continuing without it." >&2
+  echo "ERROR: Could not find conda.sh." >&2
+  echo "Tried cluster module anaconda3/2025.06 and local miniconda installs under:" >&2
+  echo "  - ${SCRATCH_BASE}/miniconda3" >&2
+  echo "  - ${HOME}/miniconda3" >&2
+  exit 1
 fi
 
-# =============================================================================
-# Conda activation (cluster-specific, CRITICAL sequence)
-# =============================================================================
-module purge
-module load anaconda3/2025.06
-source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
+source "${CONDA_SH}"
 
-# Avoid occasional conda hook issues under strict nounset shells on this cluster.
 export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
 set +u
 conda activate "${CONDA_ENV}"
@@ -64,41 +82,94 @@ set -u
 
 if [ -z "${CONDA_PREFIX:-}" ] || [ ! -d "${CONDA_PREFIX}" ]; then
   echo "ERROR: Failed to activate conda environment: ${CONDA_ENV}" >&2
-  echo "Pass the correct env with --export=ALL,CONDA_ENV=/scratch/${NETID}/conda-envs/<env>" >&2
   exit 1
 fi
-echo "Activated conda env: ${CONDA_PREFIX}"
 
-# Ensure the activated env's Python wins over module-level Anaconda paths.
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
-
 unset PYTHONHOME
 unset PYTHONPATH
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+export TABPFN_DISABLE_TELEMETRY=1
 
 PYTHON="${CONDA_PREFIX}/bin/python"
 if [ ! -x "${PYTHON}" ]; then
   echo "ERROR: Python not found at ${PYTHON}" >&2
   exit 1
 fi
-echo "Using: ${PYTHON} ($(${PYTHON} --version 2>&1))"
 
-"${PYTHON}" -c "import tabpfn; print(f'TabPFN imported OK')" || {
-  echo "ERROR: TabPFN import check failed. Install with: pip install tabpfn" >&2
+hg_dataset_root_name() {
+  case "${DATASET}" in
+    pcam) echo "pcam-hg" ;;
+    camelyon17) echo "camelyon17-hg" ;;
+    *) echo "${DATASET}" ;;
+  esac
+}
+
+default_hg_embedding_dir="${DATA_ROOT}/$(hg_dataset_root_name)"
+if [ -z "${EMBEDDING_DIR}" ]; then
+  if [ -d "${default_hg_embedding_dir}/train/embeddings" ]; then
+    EMBEDDING_DIR="${default_hg_embedding_dir}"
+  else
+    EMBEDDING_DIR="data/embeddings"
+  fi
+fi
+
+cd "${PROJECT_ROOT}"
+mkdir -p slurm_logs
+mkdir -p "${OUTPUT_DIR}"
+
+if [ ! -f "experiments/exp4_tabpfn_baseline.py" ]; then
+  echo "ERROR: experiments/exp4_tabpfn_baseline.py not found under ${PROJECT_ROOT}" >&2
+  exit 1
+fi
+
+"${PYTHON}" -c "import tabpfn; print('TabPFN imported OK')" || {
+  echo "ERROR: TabPFN import check failed. Install it in ${CONDA_ENV}." >&2
   exit 1
 }
 
-export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+have_flat_embeddings() {
+  for suffix in train_embeddings train_labels val_embeddings val_labels test_embeddings test_labels; do
+    if [ ! -f "${EMBEDDING_DIR}/${DATASET}_${suffix}.npy" ]; then
+      return 1
+    fi
+  done
+  return 0
+}
 
-# Disable TabPFN telemetry on cluster jobs
-export TABPFN_DISABLE_TELEMETRY=1
+have_hg_embeddings() {
+  local hg_root_name
+  local dataset_root
+  local split_dir
+  hg_root_name="$(hg_dataset_root_name)"
+  dataset_root="${EMBEDDING_DIR}"
 
-# =============================================================================
-# Run Experiment 4
-# =============================================================================
-cd "${PROJECT_ROOT}"
-mkdir -p slurm_logs
-mkdir -p data
+  if [ ! -d "${dataset_root}/train/embeddings" ] && [ -d "${EMBEDDING_DIR}/${hg_root_name}/train/embeddings" ]; then
+    dataset_root="${EMBEDDING_DIR}/${hg_root_name}"
+  fi
+
+  for split_dir in train valid test; do
+    if [ ! -d "${dataset_root}/${split_dir}/embeddings" ]; then
+      return 1
+    fi
+    if [ -f "${dataset_root}/${split_dir}/embeddings/projected_512.npy" ] || \
+       [ -f "${dataset_root}/${split_dir}/embeddings/embeddings.npy" ]; then
+      :
+    else
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+if ! have_flat_embeddings && ! have_hg_embeddings; then
+  echo "ERROR: Missing embeddings for dataset=${DATASET} in ${EMBEDDING_DIR}" >&2
+  echo "Expected either flat files like ${EMBEDDING_DIR}/${DATASET}_train_embeddings.npy" >&2
+  echo "or a Hugging Face export layout like ${EMBEDDING_DIR}/$(hg_dataset_root_name)/train/embeddings/projected_512.npy" >&2
+  exit 1
+fi
 
 echo "=============================================================================="
 echo "Experiment 4: TabPFN Tabular Model Baseline"
@@ -110,7 +181,13 @@ echo "Start time        : $(date)"
 echo "Project root      : ${PROJECT_ROOT}"
 echo "Conda env         : ${CONDA_ENV}"
 echo "Dataset           : ${DATASET}"
+echo "Data root         : ${DATA_ROOT}"
+echo "Embedding dir     : ${EMBEDDING_DIR}"
+echo "Output dir        : ${OUTPUT_DIR}"
+echo "Device            : ${DEVICE}"
 echo "Max train samples : ${MAX_TRAIN_SAMPLES}"
+echo "Predict chunk     : ${PREDICT_CHUNK_SIZE}"
+echo "Seed              : ${SEED}"
 echo "=============================================================================="
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
@@ -119,13 +196,15 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 "${PYTHON}" experiments/exp4_tabpfn_baseline.py \
     --dataset "${DATASET}" \
     --embedding-dir "${EMBEDDING_DIR}" \
-    --output-dir data \
+    --output-dir "${OUTPUT_DIR}" \
     --max-train-samples "${MAX_TRAIN_SAMPLES}" \
-    --device cuda
+    --predict-chunk-size "${PREDICT_CHUNK_SIZE}" \
+    --device "${DEVICE}" \
+    --seed "${SEED}"
 
 echo "=============================================================================="
 echo "Done: $(date)"
-echo "Expected outputs in ${PROJECT_ROOT}/data:"
+echo "Expected outputs in ${PROJECT_ROOT}/${OUTPUT_DIR}:"
 echo "  - exp4_${DATASET}_results.json"
 echo "  - exp4_${DATASET}_calibration.png"
 echo "  - exp4_${DATASET}_roc.png"

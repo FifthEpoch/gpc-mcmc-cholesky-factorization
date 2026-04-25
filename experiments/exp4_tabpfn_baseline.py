@@ -52,7 +52,11 @@ def load_embeddings(
     emb_path = emb_dir / f"{dataset}_{split}_embeddings.npy"
     lbl_path = emb_dir / f"{dataset}_{split}_labels.npy"
     if emb_path.exists() and lbl_path.exists():
-        return np.load(emb_path), np.load(lbl_path)
+        emb = np.load(emb_path)
+        lbl = np.asarray(np.load(lbl_path)).reshape(-1)
+        print(f"[load_embeddings] {dataset}:{split} features <- {emb_path}")
+        print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_path}")
+        return emb, lbl
 
     # Format 2 (partner HG export layout), either:
     #   <emb_dir>/<dataset>-hg/<split_dir>/embeddings/...
@@ -79,12 +83,19 @@ def load_embeddings(
 
         lbl_file = next((emb_root / name for name in candidate_lbl_files if (emb_root / name).exists()), None)
         if lbl_file is not None:
-            return np.load(emb_file), np.load(lbl_file)
+            emb = np.load(emb_file)
+            lbl = np.asarray(np.load(lbl_file)).reshape(-1)
+            print(f"[load_embeddings] {dataset}:{split} features <- {emb_file}")
+            print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_file}")
+            return emb, lbl
 
         csv_path = split_root / "labels.csv"
         if csv_path.exists():
             labels = _load_labels_from_csv(csv_path)
-            return np.load(emb_file), labels
+            emb = np.load(emb_file)
+            print(f"[load_embeddings] {dataset}:{split} features <- {emb_file}")
+            print(f"[load_embeddings] {dataset}:{split} labels   <- {csv_path}")
+            return emb, labels
 
     raise FileNotFoundError(
         "Could not find embeddings for dataset="
