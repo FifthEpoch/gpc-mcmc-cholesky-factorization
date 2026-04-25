@@ -52,13 +52,11 @@ else
   echo "WARN: set_scratch_env.sh not found, continuing without it." >&2
 fi
 
-module purge
-module load anaconda3/2025.06
-source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
+source "/scratch/${NETID}/miniconda3/etc/profile.d/conda.sh"
 
 export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
 set +u
-conda activate "${CONDA_ENV}"
+conda activate "/scratch/${NETID}/conda-envs/gpc"
 set -u
 
 if [ -z "${CONDA_PREFIX:-}" ] || [ ! -d "${CONDA_PREFIX}" ]; then
