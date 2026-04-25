@@ -30,13 +30,13 @@ if PROJECT_ROOT not in sys.path:
 from predictive_metrics import (
     evaluate_binary_probabilistic_predictions,
     print_metric_table,
+    print_posterior_statistics,
 )
 
 
-def make_fake_blobs(seed: int = 42):
-    """Generate N=2000 two-blob binary data in R^2."""
+def make_fake_blobs(seed: int = 42, n_per_class: int = 1000):
+    """Generate N=2*n_per_class two-blob binary data in R^2."""
     rng = np.random.default_rng(seed)
-    n_per_class = 1000
     cov = 0.5 * np.eye(2)
     x0 = rng.multivariate_normal(mean=[-1.0, 0.0], cov=cov, size=n_per_class)
     x1 = rng.multivariate_normal(mean=[1.0, 0.0], cov=cov, size=n_per_class)
@@ -72,8 +72,8 @@ def main() -> None:
     torch.manual_seed(42)
 
     # Data setup (same task as exp1_pygp_approx_gpc)
-    X_np, y_np = make_fake_blobs(seed=42)
-    X_test_np, y_test = make_fake_blobs(seed=123)
+    X_np, y_np = make_fake_blobs(seed=42, n_per_class=1000)
+    X_test_np, y_test = make_fake_blobs(seed=123, n_per_class=500)
     X = torch.tensor(X_np, dtype=torch.float32)
     y = torch.tensor(y_np, dtype=torch.float32)
     X_test = torch.tensor(X_test_np, dtype=torch.float32)
@@ -155,7 +155,7 @@ def main() -> None:
 
     train_time = time.perf_counter() - t0
 
-    # Predict latent distribution q(f_* | D) and predictive probability P(y=1 | x_*, D)
+    print(f"\nTraining (SVGP) time: {train_time:.3f}s for {num_epochs} epochs")
     model.eval()
     likelihood.eval()
     x_min, x_max = X_np[:, 0].min() - 0.5, X_np[:, 0].max() + 0.5
@@ -193,11 +193,24 @@ def main() -> None:
     )
     train_brier = float(np.mean((p_train - y_np) ** 2))
 
-    # Labeled test-set predictions and evaluation
+    # Labeled test-set predictions and evaluation with timing
+    t_pred_start = time.perf_counter()
     q_test, p_test_dist, mu_test_t, var_test_t, prob_test_t = predict_binary(X_test)
     mu_test = mu_test_t.detach().cpu().numpy()
     var_test = var_test_t.detach().cpu().numpy()
     p_test = prob_test_t.detach().cpu().numpy()
+    t_pred_elapsed = time.perf_counter() - t_pred_start
+
+    print(f"\nPrediction timing for test set ({len(X_test)} points)")
+    print("-" * 50)
+    print(f"Prediction time: {t_pred_elapsed:.3f}s")
+
+    print_posterior_statistics(
+        latent_mean=mu_test,
+        latent_var=var_test,
+        prob_mean=p_test,
+        title="GPyTorch SVGP test set posterior statistics",
+    )
 
     test_metrics = evaluate_binary_probabilistic_predictions(
         y_true=y_test,

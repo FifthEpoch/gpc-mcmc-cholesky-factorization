@@ -34,6 +34,7 @@ from my_cholesky.kernels import GaussianKernel_mtx
 from predictive_metrics import (
     evaluate_binary_probabilistic_predictions,
     print_metric_table,
+    print_posterior_statistics,
     summarize_predictive_distribution,
 )
 
@@ -345,8 +346,8 @@ def main():
     L_dense = np.linalg.cholesky(K_train)
 
     # HMC parameters
-    n_samples = 4000
-    n_warmup = 400
+    n_samples = 5000
+    n_warmup = 500
     hmc_step = 4 / np.sqrt(n_train)
     n_leapfrog = 12
 
@@ -357,6 +358,7 @@ def main():
     print(f"  n_samples: {n_samples}")
     print(f"  n_warmup: {n_warmup}")
 
+    t_train_start = time.perf_counter()
     hmc_stats = run_hmc(
         L_dense,
         y_train,
@@ -366,7 +368,9 @@ def main():
         step_size=hmc_step,
         n_leapfrog=n_leapfrog,
     )
+    t_train_elapsed = time.perf_counter() - t_train_start
 
+    print(f"\nTraining (HMC) time: {t_train_elapsed:.3f}s for {n_samples} samples ({t_train_elapsed / n_samples * 1000:.2f}ms per sample)")
     print(f"HMC acceptance rate: {hmc_stats['accept_rate']:.3f}")
 
     # Diagnostics on chain
@@ -395,7 +399,8 @@ def main():
     nu_samples = hmc_stats["nu_samples"]
     f_train_samples = L_dense @ nu_samples.T
 
-    # Sample predictive probabilities for the labeled test set.
+    # Sample predictive probabilities for the labeled test set with timing.
+    t_pred_start = time.perf_counter()
     p_test_samples, latent_test_samples = sample_predictive_probabilities(
         K_train,
         K_test_train_eval,
@@ -404,6 +409,7 @@ def main():
         n_conditional_draws=10,
         seed=999,
     )
+    t_pred_elapsed = time.perf_counter() - t_pred_start
 
     pred_summary = summarize_predictive_distribution(
         p_samples=p_test_samples,
@@ -425,6 +431,18 @@ def main():
     latent_q05 = pred_summary["latent_q05"]
     latent_q50 = pred_summary["latent_q50"]
     latent_q95 = pred_summary["latent_q95"]
+
+    print(f"\nPrediction timing for test set ({n_test_labeled} points)")
+    print("-" * 50)
+    print(f"Prediction time: {t_pred_elapsed:.3f}s")
+
+    print_posterior_statistics(
+        latent_mean=predictive_latent_mean,
+        latent_var=predictive_latent_var,
+        prob_mean=predictive_prob,
+        prob_var=predictive_var,
+        title="HMC GP test set posterior statistics",
+    )
 
     test_metrics = evaluate_binary_probabilistic_predictions(
         y_true=y_test,
