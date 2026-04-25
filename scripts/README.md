@@ -45,6 +45,55 @@ python scripts/download_datasets.py --datasets camelyon17 --root datasets
 
 ## Submitting Experiments
 
+### Experiment 1: GPyTorch SVGP Binary GP Classification
+
+Runs the sparse variational GP classifier on frozen embeddings. By default the
+job prefers the HG-style embedding layout, so on PCam it will use:
+
+- `datasets/pcam-hg/train/embeddings/projected_512.npy`
+- `datasets/pcam-hg/valid/embeddings/projected_512.npy`
+- `datasets/pcam-hg/test/embeddings/projected_512.npy`
+
+```bash
+sbatch --export=ALL,NETID=ab1234,DATASET=pcam scripts/exp1_gpytorch_svgp_gpc.sbatch
+```
+
+| Variable               | Default         | Description                                      |
+| ---------------------- | --------------- | ------------------------------------------------ |
+| `NETID`                | auto-detected   | Your cluster NetID                               |
+| `DATASET`              | `pcam`          | `pcam`, `camelyon17`, or `embed`                 |
+| `EMBEDDING_DIR`        | auto-detected   | Defaults to `datasets/<dataset>-hg` if present   |
+| `CONDA_ENV`            | auto-detected   | Override conda env path                          |
+| `PROJECT_ROOT`         | auto-detected   | Override project directory                       |
+| `NUM_INDUCING`         | `256`           | Number of inducing points                        |
+| `BATCH_SIZE`           | `2048`          | Training batch size                              |
+| `PREDICT_BATCH_SIZE`   | `4096`          | Validation/test prediction batch size            |
+| `EPOCHS`               | `15`            | Maximum number of epochs                         |
+| `PATIENCE`             | `4`             | Early stopping patience on validation AUROC      |
+| `LEARNING_RATE`        | `0.01`          | Adam learning rate                               |
+| `MAX_TRAIN_SAMPLES`    | `0`             | Subsample train set if nonzero                   |
+| `MAX_VAL_SAMPLES`      | `0`             | Subsample validation set if nonzero              |
+| `MAX_TEST_SAMPLES`     | `0`             | Subsample test set if nonzero                    |
+| `DISABLE_STANDARDIZE`  | `0`             | Set to `1` to disable train-stat standardization |
+
+**Examples:**
+
+```bash
+# Full PCam run on the existing 512-d projected embeddings
+sbatch --export=ALL,NETID=ab1234,DATASET=pcam scripts/exp1_gpytorch_svgp_gpc.sbatch
+
+# Faster smoke test with a capped train set and fewer inducing points
+sbatch --export=ALL,NETID=ab1234,DATASET=pcam,MAX_TRAIN_SAMPLES=50000,MAX_VAL_SAMPLES=10000,MAX_TEST_SAMPLES=10000,NUM_INDUCING=128 \
+       scripts/exp1_gpytorch_svgp_gpc.sbatch
+```
+
+**Outputs:** `data/exp1_gpytorch_svgp_<dataset>_results.json`,
+`data/exp1_gpytorch_svgp_<dataset>_posterior.npz`,
+`data/exp1_gpytorch_svgp_<dataset>_calibration.png`,
+`data/exp1_gpytorch_svgp_<dataset>_roc.png`
+
+---
+
 ### Experiment 0: RPCholesky Algorithm Verification
 
 CPU-only job. No GPU required.
