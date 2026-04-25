@@ -21,6 +21,7 @@ export PYTHONNOUSERSITE=1
 # Optional overrides:
 #   DATASET       pcam | camelyon17 | embed          (default: pcam)
 #   ENCODER       densenet121 | dinov2_vitl14        (default: densenet121)
+#   EMBEDDING_DIR path to embedding root              (default: data/embeddings)
 #   CONDA_ENV     /path/to/env                       (auto-detected)
 #   PROJECT_ROOT  /path/to/project                   (auto-detected)
 #   SKIP_EMBED    1                                  (skip embedding extraction)
@@ -34,6 +35,7 @@ fi
 DATASET="${DATASET:-pcam}"
 ENCODER="${ENCODER:-densenet121}"
 SKIP_EMBED="${SKIP_EMBED:-0}"
+EMBEDDING_DIR="${EMBEDDING_DIR:-data/embeddings}"
 
 SCRATCH_BASE="/scratch/${NETID}"
 PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
@@ -95,7 +97,7 @@ export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 # =============================================================================
 cd "${PROJECT_ROOT}"
 mkdir -p slurm_logs
-mkdir -p data/embeddings
+mkdir -p "${EMBEDDING_DIR}"
 
 echo "=============================================================================="
 echo "Experiment 3: Deterministic Neural Network Baseline"
@@ -120,13 +122,13 @@ if [ "${SKIP_EMBED}" != "1" ]; then
   "${PYTHON}" experiments/extract_embeddings.py \
       --dataset "${DATASET}" \
       --data-root datasets \
-      --output-dir data/embeddings \
+      --output-dir "${EMBEDDING_DIR}" \
       --encoder "${ENCODER}" \
       --batch-size 256 \
       --device cuda
 else
   echo ""
-  echo "[Step 1] Skipped (SKIP_EMBED=1). Using existing embeddings in data/embeddings/"
+  echo "[Step 1] Skipped (SKIP_EMBED=1). Using existing embeddings in ${EMBEDDING_DIR}"
 fi
 
 # --- Step 2: Train MLP + evaluate --------------------------------------------
@@ -134,7 +136,7 @@ echo ""
 echo "[Step 2] Training MLP head and evaluating on ${DATASET}"
 "${PYTHON}" experiments/exp3_nn_baseline.py \
     --dataset "${DATASET}" \
-    --embedding-dir data/embeddings \
+    --embedding-dir "${EMBEDDING_DIR}" \
     --output-dir data \
     --device cuda
 

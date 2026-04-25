@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import sys
@@ -60,9 +61,71 @@ class MLPClassifier(nn.Module):
 def load_embeddings(
     emb_dir: Path, dataset: str, split: str
 ) -> tuple[np.ndarray, np.ndarray]:
-    emb = np.load(emb_dir / f"{dataset}_{split}_embeddings.npy")
-    lbl = np.load(emb_dir / f"{dataset}_{split}_labels.npy")
-    return emb, lbl
+    # Format 1 (default project format):
+    #   <emb_dir>/<dataset>_<split>_embeddings.npy
+    #   <emb_dir>/<dataset>_<split>_labels.npy
+    emb_path = emb_dir / f"{dataset}_{split}_embeddings.npy"
+    lbl_path = emb_dir / f"{dataset}_{split}_labels.npy"
+    if emb_path.exists() and lbl_path.exists():
+        return np.load(emb_path), np.load(lbl_path)
+
+    # Format 2 (partner HG export layout), either:
+    #   <emb_dir>/<dataset>-hg/<split_dir>/embeddings/...
+    # or
+    #   <emb_dir>/<split_dir>/embeddings/...
+    split_dir = "valid" if split == "val" else split
+    dataset_roots = [
+        emb_dir / f"{dataset}-hg",
+        emb_dir / dataset,
+        emb_dir,
+    ]
+    candidate_emb_files = ["projected_512.npy", "embeddings.npy"]
+    candidate_lbl_files = ["y_embeddings.npy", "labels.npy"]
+
+    for ds_root in dataset_roots:
+        split_root = ds_root / split_dir
+        emb_root = split_root / "embeddings"
+        if not emb_root.exists():
+            continue
+
+        emb_file = next((emb_root / name for name in candidate_emb_files if (emb_root / name).exists()), None)
+        if emb_file is None:
+            continue
+
+        lbl_file = next((emb_root / name for name in candidate_lbl_files if (emb_root / name).exists()), None)
+        if lbl_file is not None:
+            return np.load(emb_file), np.load(lbl_file)
+
+        csv_path = split_root / "labels.csv"
+        if csv_path.exists():
+            labels = _load_labels_from_csv(csv_path)
+            return np.load(emb_file), labels
+
+    raise FileNotFoundError(
+        "Could not find embeddings for dataset="
+        f"{dataset!r}, split={split!r} under {emb_dir}. "
+        "Expected either standard files "
+        f"({dataset}_{split}_embeddings.npy / {dataset}_{split}_labels.npy) "
+        "or partner HG layout under <root>/<dataset>-hg/<split>/embeddings/."
+    )
+
+
+def _load_labels_from_csv(csv_path: Path) -> np.ndarray:
+    """Read labels from split-level labels.csv (expects a 'label' column)."""
+    labels: list[int] = []
+    with csv_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            raise ValueError(f"labels.csv has no header: {csv_path}")
+        if "label" in reader.fieldnames:
+            key = "label"
+        elif "y" in reader.fieldnames:
+            key = "y"
+        else:
+            key = reader.fieldnames[0]
+        for row in reader:
+            labels.append(int(row[key]))
+    return np.asarray(labels, dtype=np.int64)
 
 
 def make_loader(
@@ -105,6 +168,35 @@ def predict(model: nn.Module, loader: DataLoader, device: torch.device) -> np.nd
         logits = model(x.to(device))
         probs.append(torch.sigmoid(logits).cpu().numpy())
     return np.concatenate(probs)
+
+
+def confusion_counts_rates(
+    y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5
+) -> dict[str, float]:
+    """Return TP/TN/FP/FN counts and common classification rates."""
+    y_true = y_true.astype(int)
+    y_pred = (y_prob >= threshold).astype(int)
+
+    tp = int(np.sum((y_pred == 1) & (y_true == 1)))
+    tn = int(np.sum((y_pred == 0) & (y_true == 0)))
+    fp = int(np.sum((y_pred == 1) & (y_true == 0)))
+    fn = int(np.sum((y_pred == 0) & (y_true == 1)))
+
+    tpr = tp / max(tp + fn, 1)  # sensitivity / recall
+    tnr = tn / max(tn + fp, 1)  # specificity
+    fpr = fp / max(fp + tn, 1)
+    fnr = fn / max(fn + tp, 1)
+
+    return {
+        "tp": tp,
+        "tn": tn,
+        "fp": fp,
+        "fn": fn,
+        "true_positive_rate": float(tpr),
+        "true_negative_rate": float(tnr),
+        "false_positive_rate": float(fpr),
+        "false_negative_rate": float(fnr),
+    }
 
 
 def run_experiment(args: argparse.Namespace) -> dict:
@@ -171,6 +263,7 @@ def run_experiment(args: argparse.Namespace) -> dict:
     infer_time = time() - infer_start
 
     metrics = compute_all_metrics(test_lbl, test_probs, threshold=0.5, n_bins=15)
+    metrics.update(confusion_counts_rates(test_lbl, test_probs, threshold=0.5))
     metrics["train_time_sec"] = round(train_time, 3)
     metrics["inference_time_sec"] = round(infer_time, 3)
     metrics["best_val_auroc"] = round(best_val_auroc, 6)
@@ -180,6 +273,16 @@ def run_experiment(args: argparse.Namespace) -> dict:
     print(f"\nTest metrics ({ds}):")
     for k, v in metrics.items():
         print(f"  {k:25s}: {v}")
+    print("\nConfusion details (@ threshold=0.5):")
+    print(f"  TP={metrics['tp']}  TN={metrics['tn']}  FP={metrics['fp']}  FN={metrics['fn']}")
+    print(
+        "  TPR={:.4f}  TNR={:.4f}  FPR={:.4f}  FNR={:.4f}".format(
+            metrics["true_positive_rate"],
+            metrics["true_negative_rate"],
+            metrics["false_positive_rate"],
+            metrics["false_negative_rate"],
+        )
+    )
 
     results_path = out_dir / f"exp3_{ds}_results.json"
     with open(results_path, "w") as f:
