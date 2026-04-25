@@ -23,6 +23,7 @@ export PYTHONNOUSERSITE=1
 
 SBATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$(cd "${SBATCH_DIR}/.." && pwd)}}"
+ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
 NETID="${NETID:-}"
 
 if [ -z "${NETID}" ]; then
@@ -90,7 +91,15 @@ unset PYTHONHOME
 unset PYTHONPATH
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-export TABPFN_DISABLE_TELEMETRY=1
+if [ -f "${ENV_FILE}" ]; then
+  echo "Loading env from ${ENV_FILE}"
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+fi
+
+export TABPFN_DISABLE_TELEMETRY="${TABPFN_DISABLE_TELEMETRY:-1}"
 # Headless: do not try to open a browser for PriorLabs login on compute nodes.
 export TABPFN_NO_BROWSER="${TABPFN_NO_BROWSER:-1}"
 export TABPFN_TOKEN="${TABPFN_TOKEN:-}"
@@ -105,6 +114,11 @@ if [ ! -x "${PYTHON}" ]; then
   echo "ERROR: Python not found at ${PYTHON}" >&2
   exit 1
 fi
+
+"${PYTHON}" -c "import dotenv; print('python-dotenv imported OK')" >/dev/null 2>&1 || {
+  echo "Installing missing python-dotenv into ${CONDA_ENV} ..."
+  "${PYTHON}" -m pip install --no-cache-dir python-dotenv
+}
 
 hg_dataset_root_name() {
   case "${DATASET}" in
