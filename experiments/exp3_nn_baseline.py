@@ -74,7 +74,11 @@ def load_embeddings(
     emb_path = emb_dir / f"{dataset}_{split}_embeddings.npy"
     lbl_path = emb_dir / f"{dataset}_{split}_labels.npy"
     if emb_path.exists() and lbl_path.exists():
-        return np.load(emb_path), np.load(lbl_path)
+        emb = np.load(emb_path)
+        lbl = np.asarray(np.load(lbl_path)).reshape(-1)
+        print(f"[load_embeddings] {dataset}:{split} features <- {emb_path}")
+        print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_path}")
+        return emb, lbl
 
     # Format 2 (partner HG export layout), either:
     #   <emb_dir>/<dataset>-hg/<split_dir>/embeddings/...
@@ -101,12 +105,19 @@ def load_embeddings(
 
         lbl_file = next((emb_root / name for name in candidate_lbl_files if (emb_root / name).exists()), None)
         if lbl_file is not None:
-            return np.load(emb_file), np.load(lbl_file)
+            emb = np.load(emb_file)
+            lbl = np.asarray(np.load(lbl_file)).reshape(-1)
+            print(f"[load_embeddings] {dataset}:{split} features <- {emb_file}")
+            print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_file}")
+            return emb, lbl
 
         csv_path = split_root / "labels.csv"
         if csv_path.exists():
             labels = _load_labels_from_csv(csv_path)
-            return np.load(emb_file), labels
+            emb = np.load(emb_file)
+            print(f"[load_embeddings] {dataset}:{split} features <- {emb_file}")
+            print(f"[load_embeddings] {dataset}:{split} labels   <- {csv_path}")
+            return emb, labels
 
     raise FileNotFoundError(
         "Could not find embeddings for dataset="
@@ -133,56 +144,6 @@ def _load_labels_from_csv(csv_path: Path) -> np.ndarray:
         for row in reader:
             labels.append(int(row[key]))
     return np.asarray(labels, dtype=np.int64)
-    flat_emb = emb_dir / f"{dataset}_{split}_embeddings.npy"
-    flat_lbl = emb_dir / f"{dataset}_{split}_labels.npy"
-    if flat_emb.exists() and flat_lbl.exists():
-        emb = np.load(flat_emb)
-        lbl = np.asarray(np.load(flat_lbl)).reshape(-1)
-        if emb.shape[0] != lbl.shape[0]:
-            raise ValueError(
-                f"Mismatched rows for {flat_emb.name} ({emb.shape[0]}) and "
-                f"{flat_lbl.name} ({lbl.shape[0]})."
-            )
-        print(f"[load_embeddings] {dataset}:{split} features <- {flat_emb}")
-        print(f"[load_embeddings] {dataset}:{split} labels   <- {flat_lbl}")
-        return emb, lbl
-
-    hg_root_name = HG_DATASET_ROOTS.get(dataset, dataset)
-    split_dir_name = {"train": "train", "val": "valid", "test": "test"}[split]
-
-    hg_root_candidates = [emb_dir]
-    nested_candidate = emb_dir / hg_root_name
-    if nested_candidate not in hg_root_candidates:
-        hg_root_candidates.append(nested_candidate)
-
-    for hg_root in hg_root_candidates:
-        split_emb_dir = hg_root / split_dir_name / "embeddings"
-        raw_emb = split_emb_dir / "embeddings.npy"
-        projected_emb = split_emb_dir / "projected_512.npy"
-        lbl_path = split_emb_dir / "y_embeddings.npy"
-
-        # Prefer the 512-d projected embeddings when available.
-        feature_path = projected_emb if projected_emb.exists() else raw_emb
-        if feature_path.exists() and lbl_path.exists():
-            emb = np.load(feature_path)
-            lbl = np.asarray(np.load(lbl_path)).reshape(-1)
-            if emb.shape[0] != lbl.shape[0]:
-                raise ValueError(
-                    f"Mismatched rows for {feature_path} ({emb.shape[0]}) and "
-                    f"{lbl_path} ({lbl.shape[0]})."
-                )
-            print(f"[load_embeddings] {dataset}:{split} features <- {feature_path}")
-            print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_path}")
-            return emb, lbl
-
-    raise FileNotFoundError(
-        "Could not find embeddings for "
-        f"dataset={dataset}, split={split} under {emb_dir}. "
-        "Supported layouts are flat files like "
-        f"{dataset}_{split}_embeddings.npy and Hugging Face export layouts like "
-        f"{hg_root_name}/{split_dir_name}/embeddings/(embeddings.npy|projected_512.npy) "
-        "with y_embeddings.npy."
-    )
 
 
 def make_loader(

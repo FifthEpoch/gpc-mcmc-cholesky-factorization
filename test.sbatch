@@ -108,6 +108,30 @@ if [ ! -x "${PYTHON}" ]; then
   exit 1
 fi
 
+default_hg_embedding_dir="${DATA_ROOT}"
+case "${DATASET}" in
+  pcam) default_hg_embedding_dir="${DATA_ROOT}/pcam-hg" ;;
+  camelyon17) default_hg_embedding_dir="${DATA_ROOT}/camelyon17-hg" ;;
+  *) default_hg_embedding_dir="${DATA_ROOT}/${DATASET}" ;;
+esac
+
+if [ -z "${EMBEDDING_DIR}" ]; then
+  if [ -d "${default_hg_embedding_dir}/train/embeddings" ]; then
+    EMBEDDING_DIR="${default_hg_embedding_dir}"
+  else
+    EMBEDDING_DIR="data/embeddings"
+  fi
+fi
+
+if [ -z "${AUTO_EXTRACT}" ]; then
+  if [ "${EMBEDDING_DIR}" = "${default_hg_embedding_dir}" ] && \
+     [ -d "${default_hg_embedding_dir}/train/embeddings" ]; then
+    AUTO_EXTRACT=0
+  else
+    AUTO_EXTRACT=1
+  fi
+fi
+
 cd "${PROJECT_ROOT}"
 mkdir -p slurm_logs
 mkdir -p "${OUTPUT_DIR}"
@@ -130,24 +154,6 @@ hg_dataset_root_name() {
     *) echo "${DATASET}" ;;
   esac
 }
-
-default_hg_embedding_dir="${DATA_ROOT}/$(hg_dataset_root_name)"
-if [ -z "${EMBEDDING_DIR}" ]; then
-  if [ -d "${default_hg_embedding_dir}/train/embeddings" ]; then
-    EMBEDDING_DIR="${default_hg_embedding_dir}"
-  else
-    EMBEDDING_DIR="data/embeddings"
-  fi
-fi
-
-if [ -z "${AUTO_EXTRACT}" ]; then
-  if [ "${EMBEDDING_DIR}" = "${default_hg_embedding_dir}" ] && \
-     [ -d "${default_hg_embedding_dir}/train/embeddings" ]; then
-    AUTO_EXTRACT=0
-  else
-    AUTO_EXTRACT=1
-  fi
-fi
 
 have_flat_embeddings() {
   for suffix in train_embeddings train_labels val_embeddings val_labels test_embeddings test_labels; do
