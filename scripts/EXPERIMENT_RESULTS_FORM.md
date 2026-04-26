@@ -26,6 +26,7 @@ Use this document so everyone records runs in the same shape. You can copy the *
 | `embedding_variant` | e.g. `densenet121`, `dinov2_vitl14`, `projected_512` |
 | `feature_dim` | Embedding width (e.g. 512, 1024) |
 | `threshold` | Classification threshold (we use 0.5 in code) |
+| `test_log_loss` | Negative log-likelihood / cross-entropy on the test split; lower is better |
 | `fit_or_train_time_sec` | Exp3: `train_time_sec`; Exp4: `fit_time_sec` |
 | `inference_time_sec` | Same key in both JSON files |
 | `total_pipeline_time_sec` | Optional: include embedding extraction if you timed full pipeline |
@@ -34,8 +35,8 @@ Use this document so everyone records runs in the same shape. You can copy the *
 
 ## Results table (copy blank row below)
 
-| record_id | experiment | method_name | dataset | embedding_source | embedding_root | embedding_variant | feature_dim | threshold | seed | job_id | account_partition | node_gpu | code_ref | run_timestamp_utc | auroc | auprc | accuracy | sensitivity_tpr | specificity_tnr | false_positive_rate | false_negative_rate | brier | ece | tp | tn | fp | fn | fit_or_train_time_sec | inference_time_sec | total_pipeline_time_sec | n_train | n_val | n_test | notes |
-|-----------|--------------|-------------|---------|------------------|----------------|-------------------|-------------|-----------|------|--------|-------------------|----------|----------|-------------------|-------|-------|----------|-----------------|-----------------|----------------------|----------------------|-------|-----|----|----|----|----|------------------------|---------------------|-------------------------|---------|-------|--------|-------|
+| record_id | experiment | method_name | dataset | embedding_source | embedding_root | embedding_variant | feature_dim | threshold | seed | job_id | account_partition | node_gpu | code_ref | run_timestamp_utc | auroc | auprc | test_log_loss | accuracy | sensitivity_tpr | specificity_tnr | false_positive_rate | false_negative_rate | brier | ece | tp | tn | fp | fn | fit_or_train_time_sec | inference_time_sec | total_pipeline_time_sec | n_train | n_val | n_test | notes |
+|-----------|--------------|-------------|---------|------------------|----------------|-------------------|-------------|-----------|------|--------|-------------------|----------|----------|-------------------|-------|-------|---------------|----------|-----------------|-----------------|----------------------|----------------------|-------|-----|----|----|----|----|------------------------|---------------------|-------------------------|---------|-------|--------|-------|
 | | exp3 | mlp | pcam | self_extracted | data/embeddings | densenet121 | 1024 | 0.5 | 42 | | | | | | | | | | | | | | | | | | | | | | | | | | | | |
 
 ---
@@ -44,7 +45,7 @@ Use this document so everyone records runs in the same shape. You can copy the *
 
 From `exp3_*_results.json` / `exp4_*_results.json` after recent code updates:
 
-- `auroc`, `auprc`, `accuracy`, `brier`, `ece`
+- `auroc`, `auprc`, `test_log_loss`, `accuracy`, `brier`, `ece`
 - `sensitivity` → `sensitivity_tpr`
 - `false_negative_rate`, `false_positive_rate`
 - `tp`, `tn`, `fp`, `fn`
@@ -60,3 +61,4 @@ From `exp3_*_results.json` / `exp4_*_results.json` after recent code updates:
 - `false_negative_rate ≈ fn / (tp + fn)` (floating rounding OK)
 - `false_positive_rate ≈ fp / (fp + tn)`
 - All counts non-negative integers; `tp + tn + fp + fn = n_test` at the evaluated split
+- `test_log_loss` should be computed on held-out test predictions; lower means better probabilistic predictions
