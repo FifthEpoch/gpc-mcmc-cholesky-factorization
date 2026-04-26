@@ -1,10 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=exp2_lf_sweep
+#SBATCH --account=csci_ga_2565-2026sp
+#SBATCH --partition=c12m85-a100-1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
-#SBATCH --time=12:00:00
+#SBATCH --time=04:00:00
 #SBATCH --mem=64G
+#SBATCH --gres=gpu:1
 #SBATCH --output=slurm_logs/exp2_rose/%x_%j.out
 #SBATCH --error=slurm_logs/exp2_rose/%x_%j.err
 
