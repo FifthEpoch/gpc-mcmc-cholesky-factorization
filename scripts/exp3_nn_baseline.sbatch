@@ -58,6 +58,7 @@ BATCH_SIZE="${BATCH_SIZE:-512}"
 SCRATCH_BASE="/scratch/${NETID}"
 PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
+CONDA_SH="${CONDA_SH:-${SCRATCH_BASE}/miniconda3/etc/profile.d/conda.sh}"
 
 if [ -z "${EMBEDDING_DIR:-}" ]; then
   case "${DATASET}" in
@@ -110,15 +111,18 @@ else
 fi
 
 # =============================================================================
-# Conda activation (cluster-specific, CRITICAL sequence)
+# Conda activation
 # =============================================================================
-module purge
-module load anaconda3/2025.06
-source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
+if [ ! -f "${CONDA_SH}" ]; then
+  echo "ERROR: conda.sh not found at ${CONDA_SH}" >&2
+  echo "Pass the correct path with --export=ALL,CONDA_SH=/scratch/${NETID}/miniconda3/etc/profile.d/conda.sh" >&2
+  exit 1
+fi
 
 # Avoid occasional conda hook issues under strict nounset shells on this cluster.
 export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
 set +u
+source "${CONDA_SH}"
 conda activate "${CONDA_ENV}"
 set -u
 
@@ -166,6 +170,7 @@ echo "GPU          : $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/
 echo "Start time   : $(date)"
 echo "Project root : ${PROJECT_ROOT}"
 echo "Conda env    : ${CONDA_ENV}"
+echo "Conda sh     : ${CONDA_SH}"
 echo "Dataset      : ${DATASET}"
 echo "Encoder      : ${ENCODER}"
 echo "Model arch   : ${MODEL_ARCH}"
