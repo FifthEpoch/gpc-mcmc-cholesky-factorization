@@ -203,6 +203,8 @@ def run_emcee_sampler(
         "per_step_time": float(sample_time / max(n_samples, 1)),
         "total_mcmc_time": float(sample_time),
         "warmup_time": float(warmup_time),
+        "sampling_time": float(sample_time),
+        "total_sampler_time": float(warmup_time + sample_time),
         "accept_rate": float(np.mean(sampler.acceptance_fraction)),
         "nu_samples": flat_chain,
         "chain": chain,
@@ -273,13 +275,18 @@ def run_hmc(
             post_idx += 1
 
     post = slice(n_warmup, total_steps)
+    warmup = slice(0, n_warmup)
+    warmup_time = float(np.sum(step_times[warmup]))
     per_step_time = float(np.mean(step_times[post]))
-    total_mcmc_time = float(np.sum(step_times[post]))
+    sampling_time = float(np.sum(step_times[post]))
     accept_rate = float(np.mean(accepts[post]))
 
     return {
         "per_step_time": per_step_time,
-        "total_mcmc_time": total_mcmc_time,
+        "warmup_time": warmup_time,
+        "sampling_time": sampling_time,
+        "total_mcmc_time": sampling_time,
+        "total_sampler_time": warmup_time + sampling_time,
         "accept_rate": accept_rate,
         "logp_trace": logp_trace,
         "nu_samples": nu_samples,
@@ -303,8 +310,10 @@ def main() -> None:
     posterior_k200 = {}
 
     for k in k_values:
+        factor_start = time.perf_counter()
         lra = arpcholesky(A, k=k, b=10)
         F = lra.get_left_factor()
+        factor_time = time.perf_counter() - factor_start
         dim = F.shape[1]
         n_walkers = max(2 * dim + 2, 24)
 
@@ -352,7 +361,7 @@ def main() -> None:
 
         tau_gaussian = compute_tau_emcee(gaussian_stats["logp_by_walker"])
         tau_mala = compute_tau_emcee(mala_stats["logp_by_walker"])
-        tau_hmc = compute_tau_emcee(hmc_stats["logp_trace"][..., None])
+        tau_hmc = compute_tau_emcee(hmc_stats["logp_trace"][n_warmup:, None])
         ess_gaussian = compute_ess_from_tau(n_samples, n_walkers, tau_gaussian)
         ess_mala = compute_ess_from_tau(n_samples, n_walkers, tau_mala)
         ess_hmc = compute_ess_from_tau(n_samples, 1, tau_hmc)
@@ -367,9 +376,13 @@ def main() -> None:
                 "sampler": "emcee-RWM",
                 "n_walkers": n_walkers,
                 "step_size": float(np.sqrt(gaussian_step)),
+                "factor_time": float(factor_time),
+                "warmup_time": gaussian_stats["warmup_time"],
+                "sampling_time": gaussian_stats["sampling_time"],
                 "accept_rate": gaussian_stats["accept_rate"],
                 "per_step_time": gaussian_stats["per_step_time"],
                 "total_time": gaussian_stats["total_mcmc_time"],
+                "total_model_compute_time": float(factor_time) + gaussian_stats["total_sampler_time"],
                 "ess_logp": ess_gaussian,
                 "ess_per_sec": essps_gaussian,
                 "tau": tau_gaussian,
@@ -381,9 +394,13 @@ def main() -> None:
                 "sampler": "emcee-MALA",
                 "n_walkers": n_walkers,
                 "step_size": mala_step,
+                "factor_time": float(factor_time),
+                "warmup_time": mala_stats["warmup_time"],
+                "sampling_time": mala_stats["sampling_time"],
                 "accept_rate": mala_stats["accept_rate"],
                 "per_step_time": mala_stats["per_step_time"],
                 "total_time": mala_stats["total_mcmc_time"],
+                "total_model_compute_time": float(factor_time) + mala_stats["total_sampler_time"],
                 "ess_logp": ess_mala,
                 "ess_per_sec": essps_mala,
                 "tau": tau_mala,
@@ -395,9 +412,13 @@ def main() -> None:
                 "sampler": "HMC",
                 "n_walkers": 1,
                 "step_size": hmc_stats["step_size"],
+                "factor_time": float(factor_time),
+                "warmup_time": hmc_stats["warmup_time"],
+                "sampling_time": hmc_stats["sampling_time"],
                 "accept_rate": hmc_stats["accept_rate"],
                 "per_step_time": hmc_stats["per_step_time"],
                 "total_time": hmc_stats["total_mcmc_time"],
+                "total_model_compute_time": float(factor_time) + hmc_stats["total_sampler_time"],
                 "ess_logp": ess_hmc,
                 "ess_per_sec": essps_hmc,
                 "tau": tau_hmc,

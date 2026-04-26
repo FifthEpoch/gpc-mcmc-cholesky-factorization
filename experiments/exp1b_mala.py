@@ -155,13 +155,18 @@ def run_rwm(
             post_idx += 1
 
     post = slice(n_warmup, total_steps)
+    warmup = slice(0, n_warmup)
+    warmup_time = float(np.sum(step_times[warmup]))
     per_step_time = float(np.mean(step_times[post]))
-    total_mcmc_time = float(np.sum(step_times[post]))
+    sampling_time = float(np.sum(step_times[post]))
     accept_rate = float(np.mean(accepts[post]))
 
     return {
         "per_step_time": per_step_time,
-        "total_mcmc_time": total_mcmc_time,
+        "warmup_time": warmup_time,
+        "sampling_time": sampling_time,
+        "total_mcmc_time": sampling_time,
+        "total_sampler_time": warmup_time + sampling_time,
         "accept_rate": accept_rate,
         "logp_trace": logp_trace,
         "final_step_size": float(step_size),
@@ -251,13 +256,18 @@ def run_mala(
             post_idx += 1
 
     post = slice(n_warmup, total_steps)
+    warmup = slice(0, n_warmup)
+    warmup_time = float(np.sum(step_times[warmup]))
     per_step_time = float(np.mean(step_times[post]))
-    total_mcmc_time = float(np.sum(step_times[post]))
+    sampling_time = float(np.sum(step_times[post]))
     accept_rate = float(np.mean(accepts[post]))
 
     return {
         "per_step_time": per_step_time,
-        "total_mcmc_time": total_mcmc_time,
+        "warmup_time": warmup_time,
+        "sampling_time": sampling_time,
+        "total_mcmc_time": sampling_time,
+        "total_sampler_time": warmup_time + sampling_time,
         "accept_rate": accept_rate,
         "logp_trace": logp_trace,
         "final_step_size": float(step_size),
@@ -301,6 +311,7 @@ def run_hmc(
     t0 = time.perf_counter()
     rng_key, warmup_key = jax.random.split(rng_key)
     adapt_results, _ = adapt.run(warmup_key, init_position, num_steps=n_warmup)
+    warmup_time = time.perf_counter() - t0
     state = adapt_results.state
     params = adapt_results.parameters
 
@@ -310,6 +321,7 @@ def run_hmc(
     logp_trace = np.zeros(n_samples, dtype=np.float64)
     accept_rates = np.zeros(n_samples, dtype=np.float64)
 
+    t0 = time.perf_counter()
     for i in range(n_samples):
         rng_key, step_key = jax.random.split(rng_key)
         state, info = nuts.step(step_key, state)
@@ -317,14 +329,17 @@ def run_hmc(
         logp_trace[i] = float(state.logdensity)
         accept_rates[i] = float(info.acceptance_rate)
 
-    total_time = time.perf_counter() - t0
-    per_step_time = total_time / n_samples
+    sampling_time = time.perf_counter() - t0
+    per_step_time = sampling_time / n_samples
     accept_rate = float(np.mean(accept_rates))
     step_size = float(np.asarray(params["step_size"]))
 
     return {
         "per_step_time": per_step_time,
-        "total_mcmc_time": total_time,
+        "warmup_time": float(warmup_time),
+        "sampling_time": float(sampling_time),
+        "total_mcmc_time": float(sampling_time),
+        "total_sampler_time": float(warmup_time + sampling_time),
         "accept_rate": accept_rate,
         "logp_trace": logp_trace,
         "final_step_size": step_size,
@@ -352,8 +367,10 @@ def main() -> None:
     # Sweeping k to test whether MALA's ESS/sec advantage grows with
     # dimension, as predicted by Langevin diffusion theory
     for k in k_values:
+        factor_start = time.perf_counter()
         lra = arpcholesky(A, k=k, b=10)
         F = lra.get_left_factor()
+        factor_time = time.perf_counter() - factor_start
         n_warmup_k = n_warmup * max(1, k // 50)
 
         # RPCholesky factor F: O(Nk) per step, nu lives in R^k not R^N.
@@ -399,9 +416,13 @@ def main() -> None:
                 "k": k,
                 "sampler": "RWM",
                 "step_size": rwm_stats["final_step_size"],
+                "factor_time": float(factor_time),
+                "warmup_time": rwm_stats["warmup_time"],
+                "sampling_time": rwm_stats["sampling_time"],
                 "accept_rate": rwm_stats["accept_rate"],
                 "per_step_time": rwm_stats["per_step_time"],
                 "total_time": rwm_stats["total_mcmc_time"],
+                "total_model_compute_time": float(factor_time) + rwm_stats["total_sampler_time"],
                 "ess_logp": ess_rwm_logp,
                 "ess_nu0": ess_rwm_nu0,
                 "ess_per_sec": ess_per_sec_rwm,
@@ -413,9 +434,13 @@ def main() -> None:
                 "k": k,
                 "sampler": "MALA",
                 "step_size": mala_stats["final_step_size"],
+                "factor_time": float(factor_time),
+                "warmup_time": mala_stats["warmup_time"],
+                "sampling_time": mala_stats["sampling_time"],
                 "accept_rate": mala_stats["accept_rate"],
                 "per_step_time": mala_stats["per_step_time"],
                 "total_time": mala_stats["total_mcmc_time"],
+                "total_model_compute_time": float(factor_time) + mala_stats["total_sampler_time"],
                 "ess_logp": ess_mala_logp,
                 "ess_nu0": ess_mala_nu0,
                 "ess_per_sec": ess_per_sec_mala,
@@ -427,9 +452,13 @@ def main() -> None:
                 "k": k,
                 "sampler": "HMC",
                 "step_size": hmc_stats["final_step_size"],
+                "factor_time": float(factor_time),
+                "warmup_time": hmc_stats["warmup_time"],
+                "sampling_time": hmc_stats["sampling_time"],
                 "accept_rate": hmc_stats["accept_rate"],
                 "per_step_time": hmc_stats["per_step_time"],
                 "total_time": hmc_stats["total_mcmc_time"],
+                "total_model_compute_time": float(factor_time) + hmc_stats["total_sampler_time"],
                 "ess_logp": ess_hmc_logp,
                 "ess_nu0": ess_hmc_nu0,
                 "ess_per_sec": ess_per_sec_hmc,

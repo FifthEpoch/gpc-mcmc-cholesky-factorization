@@ -14,7 +14,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import os
 import sys
@@ -68,82 +67,56 @@ class MLPClassifier(nn.Module):
 def load_embeddings(
     emb_dir: Path, dataset: str, split: str
 ) -> tuple[np.ndarray, np.ndarray]:
-    # Format 1 (default project format):
-    #   <emb_dir>/<dataset>_<split>_embeddings.npy
-    #   <emb_dir>/<dataset>_<split>_labels.npy
-    emb_path = emb_dir / f"{dataset}_{split}_embeddings.npy"
-    lbl_path = emb_dir / f"{dataset}_{split}_labels.npy"
-    if emb_path.exists() and lbl_path.exists():
-        emb = np.load(emb_path)
-        lbl = np.asarray(np.load(lbl_path)).reshape(-1)
-        print(f"[load_embeddings] {dataset}:{split} features <- {emb_path}")
-        print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_path}")
+    flat_emb = emb_dir / f"{dataset}_{split}_embeddings.npy"
+    flat_lbl = emb_dir / f"{dataset}_{split}_labels.npy"
+    if flat_emb.exists() and flat_lbl.exists():
+        emb = np.load(flat_emb)
+        lbl = np.asarray(np.load(flat_lbl)).reshape(-1)
+        if emb.shape[0] != lbl.shape[0]:
+            raise ValueError(
+                f"Mismatched rows for {flat_emb.name} ({emb.shape[0]}) and "
+                f"{flat_lbl.name} ({lbl.shape[0]})."
+            )
+        print(f"[load_embeddings] {dataset}:{split} features <- {flat_emb}")
+        print(f"[load_embeddings] {dataset}:{split} labels   <- {flat_lbl}")
         return emb, lbl
 
-    # Format 2 (partner HG export layout), either:
-    #   <emb_dir>/<dataset>-hg/<split_dir>/embeddings/...
-    # or
-    #   <emb_dir>/<split_dir>/embeddings/...
-    split_dir = "valid" if split == "val" else split
-    dataset_roots = [
-        emb_dir / f"{dataset}-hg",
-        emb_dir / dataset,
-        emb_dir,
-    ]
-    candidate_emb_files = ["projected_512.npy", "embeddings.npy"]
-    candidate_lbl_files = ["y_embeddings.npy", "labels.npy"]
+    hg_root_name = HG_DATASET_ROOTS.get(dataset, dataset)
+    split_dir_name = {"train": "train", "val": "valid", "test": "test"}[split]
 
-    for ds_root in dataset_roots:
-        split_root = ds_root / split_dir
-        emb_root = split_root / "embeddings"
-        if not emb_root.exists():
-            continue
+    hg_root_candidates = [emb_dir]
+    nested_candidate = emb_dir / hg_root_name
+    if nested_candidate not in hg_root_candidates:
+        hg_root_candidates.append(nested_candidate)
 
-        emb_file = next((emb_root / name for name in candidate_emb_files if (emb_root / name).exists()), None)
-        if emb_file is None:
-            continue
+    for hg_root in hg_root_candidates:
+        split_emb_dir = hg_root / split_dir_name / "embeddings"
+        raw_emb = split_emb_dir / "embeddings.npy"
+        projected_emb = split_emb_dir / "projected_512.npy"
+        lbl_path = split_emb_dir / "y_embeddings.npy"
 
-        lbl_file = next((emb_root / name for name in candidate_lbl_files if (emb_root / name).exists()), None)
-        if lbl_file is not None:
-            emb = np.load(emb_file)
-            lbl = np.asarray(np.load(lbl_file)).reshape(-1)
-            print(f"[load_embeddings] {dataset}:{split} features <- {emb_file}")
-            print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_file}")
+        # Prefer the 512-d projected embeddings when available.
+        feature_path = projected_emb if projected_emb.exists() else raw_emb
+        if feature_path.exists() and lbl_path.exists():
+            emb = np.load(feature_path)
+            lbl = np.asarray(np.load(lbl_path)).reshape(-1)
+            if emb.shape[0] != lbl.shape[0]:
+                raise ValueError(
+                    f"Mismatched rows for {feature_path} ({emb.shape[0]}) and "
+                    f"{lbl_path} ({lbl.shape[0]})."
+                )
+            print(f"[load_embeddings] {dataset}:{split} features <- {feature_path}")
+            print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_path}")
             return emb, lbl
 
-        csv_path = split_root / "labels.csv"
-        if csv_path.exists():
-            labels = _load_labels_from_csv(csv_path)
-            emb = np.load(emb_file)
-            print(f"[load_embeddings] {dataset}:{split} features <- {emb_file}")
-            print(f"[load_embeddings] {dataset}:{split} labels   <- {csv_path}")
-            return emb, labels
-
     raise FileNotFoundError(
-        "Could not find embeddings for dataset="
-        f"{dataset!r}, split={split!r} under {emb_dir}. "
-        "Expected either standard files "
-        f"({dataset}_{split}_embeddings.npy / {dataset}_{split}_labels.npy) "
-        "or partner HG layout under <root>/<dataset>-hg/<split>/embeddings/."
+        "Could not find embeddings for "
+        f"dataset={dataset}, split={split} under {emb_dir}. "
+        "Supported layouts are flat files like "
+        f"{dataset}_{split}_embeddings.npy and Hugging Face export layouts like "
+        f"{hg_root_name}/{split_dir_name}/embeddings/(embeddings.npy|projected_512.npy) "
+        "with y_embeddings.npy."
     )
-
-
-def _load_labels_from_csv(csv_path: Path) -> np.ndarray:
-    """Read labels from split-level labels.csv (expects a 'label' column)."""
-    labels: list[int] = []
-    with csv_path.open(newline="") as f:
-        reader = csv.DictReader(f)
-        if not reader.fieldnames:
-            raise ValueError(f"labels.csv has no header: {csv_path}")
-        if "label" in reader.fieldnames:
-            key = "label"
-        elif "y" in reader.fieldnames:
-            key = "y"
-        else:
-            key = reader.fieldnames[0]
-        for row in reader:
-            labels.append(int(row[key]))
-    return np.asarray(labels, dtype=np.int64)
 
 
 def make_loader(
@@ -188,35 +161,6 @@ def predict(model: nn.Module, loader: DataLoader, device: torch.device) -> np.nd
     return np.concatenate(probs)
 
 
-def confusion_counts_rates(
-    y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5
-) -> dict[str, float]:
-    """Return TP/TN/FP/FN counts and common classification rates."""
-    y_true = y_true.astype(int)
-    y_pred = (y_prob >= threshold).astype(int)
-
-    tp = int(np.sum((y_pred == 1) & (y_true == 1)))
-    tn = int(np.sum((y_pred == 0) & (y_true == 0)))
-    fp = int(np.sum((y_pred == 1) & (y_true == 0)))
-    fn = int(np.sum((y_pred == 0) & (y_true == 1)))
-
-    tpr = tp / max(tp + fn, 1)  # sensitivity / recall
-    tnr = tn / max(tn + fp, 1)  # specificity
-    fpr = fp / max(fp + tn, 1)
-    fnr = fn / max(fn + tp, 1)
-
-    return {
-        "tp": tp,
-        "tn": tn,
-        "fp": fp,
-        "fn": fn,
-        "true_positive_rate": float(tpr),
-        "true_negative_rate": float(tnr),
-        "false_positive_rate": float(fpr),
-        "false_negative_rate": float(fnr),
-    }
-
-
 def run_experiment(args: argparse.Namespace) -> dict:
     experiment_start = datetime.now().astimezone()
     experiment_start_ts = time()
@@ -228,11 +172,9 @@ def run_experiment(args: argparse.Namespace) -> dict:
 
     ds = args.dataset
 
-    load_start = time()
     train_emb, train_lbl = load_embeddings(emb_dir, ds, "train")
     val_emb, val_lbl = load_embeddings(emb_dir, ds, "val")
     test_emb, test_lbl = load_embeddings(emb_dir, ds, "test")
-    data_loading_time = time() - load_start
 
     input_dim = train_emb.shape[1]
     print(f"Dataset: {ds}")
@@ -286,32 +228,13 @@ def run_experiment(args: argparse.Namespace) -> dict:
     test_probs = predict(model, test_loader, device)
     infer_time = time() - infer_start
 
-    evaluation_start = time()
     metrics = compute_all_metrics(test_lbl, test_probs, threshold=0.5, n_bins=15)
-    metrics.update(confusion_counts_rates(test_lbl, test_probs, threshold=0.5))
-    metrics["timing_scope"] = "data_loading, training, test_inference, evaluation_plots"
-    metrics["data_loading_time_sec"] = round(data_loading_time, 3)
     metrics["train_time_sec"] = round(train_time, 3)
-    metrics["fit_or_train_time_sec"] = round(train_time, 3)
     metrics["inference_time_sec"] = round(infer_time, 3)
     metrics["best_val_auroc"] = round(best_val_auroc, 6)
     metrics["n_train"] = int(len(train_lbl))
     metrics["n_val"] = int(len(val_lbl))
     metrics["n_test"] = int(len(test_lbl))
-
-    print(f"\nTest metrics ({ds}):")
-    for k, v in metrics.items():
-        print(f"  {k:25s}: {v}")
-    print("\nConfusion details (@ threshold=0.5):")
-    print(f"  TP={metrics['tp']}  TN={metrics['tn']}  FP={metrics['fp']}  FN={metrics['fn']}")
-    print(
-        "  TPR={:.4f}  TNR={:.4f}  FPR={:.4f}  FNR={:.4f}".format(
-            metrics["true_positive_rate"],
-            metrics["true_negative_rate"],
-            metrics["false_positive_rate"],
-            metrics["false_negative_rate"],
-        )
-    )
 
     results_path = out_dir / f"exp3_{ds}_results.json"
     fig, _ = plot_reliability_diagram(
@@ -357,12 +280,9 @@ def run_experiment(args: argparse.Namespace) -> dict:
 
     experiment_end = datetime.now().astimezone()
     total_runtime = time() - experiment_start_ts
-    evaluation_time = time() - evaluation_start
     metrics["experiment_start_time"] = experiment_start.isoformat(timespec="seconds")
     metrics["experiment_end_time"] = experiment_end.isoformat(timespec="seconds")
-    metrics["evaluation_time_sec"] = round(evaluation_time, 3)
     metrics["total_runtime_sec"] = round(total_runtime, 3)
-    metrics["total_pipeline_time_sec"] = round(total_runtime, 3)
 
     print(f"\nTest metrics ({ds}):")
     for k, v in metrics.items():

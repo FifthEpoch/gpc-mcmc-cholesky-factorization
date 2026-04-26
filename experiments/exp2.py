@@ -5,12 +5,47 @@ Real-data low-rank GP classification predictive sampling using:
 3) pivot points from RP-Cholesky as inducing points for prediction,
 4) per-point marginal predictive sampling for classification metrics.
 
-Example:
+Examples:
+    Smoke run on regenerated 5k RPCholesky factors:
     python experiments/exp2.py \
-        --factor-dir data/rpchol_test \
+        --factor-dir data/rpchol_smoke \
         --test-embeddings datasets/pcam_test_embedding.npy \
         --test-labels datasets/pcam_test_label.npy \
-        --k 100
+        --k 100 \
+        --n-samples 500 \
+        --n-warmup 500 \
+        --subsample-test 500 \
+        --output-dir data/exp2_smoke
+
+    Reuse HMC samples from a previous smoke run and only redo prediction/metrics:
+    python experiments/exp2.py \
+        --factor-dir data/rpchol_smoke \
+        --test-embeddings datasets/pcam_test_embedding.npy \
+        --test-labels datasets/pcam_test_label.npy \
+        --k 100 \
+        --subsample-test 500 \
+        --reuse-hmc data/exp2_smoke/exp2_k100_results.npz \
+        --output-dir data/exp2_smoke_repredict
+
+    Full-data k=200 run:
+    python experiments/exp2.py \
+        --factor-dir data/rpchol_full \
+        --test-embeddings datasets/pcam_test_embedding.npy \
+        --test-labels datasets/pcam_test_label.npy \
+        --k 200 \
+        --n-samples 2000 \
+        --n-warmup 500 \
+        --output-dir data/exp2_full
+
+    Reuse full-data HMC samples for a different prediction batch size:
+    python experiments/exp2.py \
+        --factor-dir data/rpchol_full \
+        --test-embeddings datasets/pcam_test_embedding.npy \
+        --test-labels datasets/pcam_test_label.npy \
+        --k 200 \
+        --reuse-hmc data/exp2_full/exp2_k200_results.npz \
+        --prediction-batch-size 256 \
+        --output-dir data/exp2_full_repredict
 """
 
 import argparse
@@ -42,8 +77,24 @@ from predictive_metrics import (
 
 
 def parse_args() -> argparse.Namespace:
+    examples = """
+Examples:
+  Smoke run:
+    python experiments/exp2.py --factor-dir data/rpchol_smoke --test-embeddings datasets/pcam_test_embedding.npy --test-labels datasets/pcam_test_label.npy --k 100 --n-samples 500 --n-warmup 500 --subsample-test 500 --output-dir data/exp2_smoke
+
+  Reuse HMC samples from that run:
+    python experiments/exp2.py --factor-dir data/rpchol_smoke --test-embeddings datasets/pcam_test_embedding.npy --test-labels datasets/pcam_test_label.npy --k 100 --subsample-test 500 --reuse-hmc data/exp2_smoke/exp2_k100_results.npz --output-dir data/exp2_smoke_repredict
+
+  Full k=200 run:
+    python experiments/exp2.py --factor-dir data/rpchol_full --test-embeddings datasets/pcam_test_embedding.npy --test-labels datasets/pcam_test_label.npy --k 200 --n-samples 2000 --n-warmup 500 --output-dir data/exp2_full
+
+  Reuse full-data HMC samples and only redo prediction/metrics:
+    python experiments/exp2.py --factor-dir data/rpchol_full --test-embeddings datasets/pcam_test_embedding.npy --test-labels datasets/pcam_test_label.npy --k 200 --reuse-hmc data/exp2_full/exp2_k200_results.npz --prediction-batch-size 256 --output-dir data/exp2_full_repredict
+"""
     parser = argparse.ArgumentParser(
-        description="Run real-data low-rank HMC GP classification prediction."
+        description="Run real-data low-rank HMC GP classification prediction.",
+        epilog=examples,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--factor-dir",
@@ -95,6 +146,12 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         dest="adapt_step_size",
         help="Disable HMC dual averaging step-size adaptation during warmup.",
+    )
+    parser.add_argument(
+        "--reuse-hmc",
+        type=str,
+        default=None,
+        help="Path to a previous exp2 results .npz file whose nu_samples should be reused.",
     )
     parser.add_argument(
         "--subsample-test",
@@ -336,6 +393,41 @@ def _subsample_rows(rng, size, *arrays):
     return tuple(arr[idx] for arr in arrays)
 
 
+def load_reused_hmc_stats(reuse_path, rank):
+    reuse_path = Path(reuse_path)
+    if not reuse_path.exists():
+        raise FileNotFoundError(f"--reuse-hmc path not found: {reuse_path}")
+
+    cached = np.load(reuse_path)
+    if "nu_samples" not in cached:
+        raise KeyError(f"{reuse_path} does not contain required array 'nu_samples'")
+
+    nu_samples = np.asarray(cached["nu_samples"], dtype=np.float64)
+    if nu_samples.ndim != 2:
+        raise ValueError(f"Cached nu_samples must have shape (n_samples, rank), got {nu_samples.shape}")
+    if nu_samples.shape[1] != rank:
+        raise ValueError(
+            f"Cached nu_samples rank mismatch: got {nu_samples.shape[1]}, expected {rank}. "
+            "Use a cache generated with the same factor rank."
+        )
+
+    hmc_stats = {
+        "nu_samples": nu_samples,
+        "accept_rate": float(cached["accept_rate"]) if "accept_rate" in cached else float("nan"),
+        "step_size": float(cached["final_step_size"]) if "final_step_size" in cached else float("nan"),
+        "per_step_time": 0.0,
+        "total_mcmc_time": 0.0,
+    }
+    tau_nu = float(cached["tau_nu"]) if "tau_nu" in cached else float("nan")
+    tau_logp = float(cached["tau_logp"]) if "tau_logp" in cached else float("nan")
+
+    print(
+        f"Reusing HMC samples from {reuse_path} "
+        f"(acceptance={hmc_stats['accept_rate']:.3f}, tau_nu={tau_nu:.2f})"
+    )
+    return hmc_stats, tau_nu, tau_logp
+
+
 def main():
     wall_t0 = time.perf_counter()
     args = parse_args()
@@ -444,23 +536,27 @@ def main():
         f"target_accept={args.hmc_target_accept:.3f}, adapt={args.adapt_step_size}"
     )
 
-    hmc_t0 = time.perf_counter()
-    hmc_stats = run_hmc(
-        factor=F_hmc,
-        y=y_train,
-        n_samples=args.n_samples,
-        n_warmup=args.n_warmup,
-        seed=args.seed,
-        initial_step_size=hmc_step,
-        n_leapfrog=args.n_leapfrog,
-        target_accept=args.hmc_target_accept,
-        adapt_step_size=args.adapt_step_size,
-    )
-    hmc_wall = time.perf_counter() - hmc_t0
+    if args.reuse_hmc is not None:
+        hmc_stats, tau_nu, tau_logp = load_reused_hmc_stats(args.reuse_hmc, rank=actual_rank)
+        hmc_wall = 0.0
+    else:
+        hmc_t0 = time.perf_counter()
+        hmc_stats = run_hmc(
+            factor=F_hmc,
+            y=y_train,
+            n_samples=args.n_samples,
+            n_warmup=args.n_warmup,
+            seed=args.seed,
+            initial_step_size=hmc_step,
+            n_leapfrog=args.n_leapfrog,
+            target_accept=args.hmc_target_accept,
+            adapt_step_size=args.adapt_step_size,
+        )
+        hmc_wall = time.perf_counter() - hmc_t0
+        tau_nu = compute_tau_emcee(hmc_stats["nu_samples"])
+        tau_logp = compute_tau_emcee(hmc_stats["logp_trace"])
 
     nu_samples = hmc_stats["nu_samples"]
-    tau_nu = compute_tau_emcee(nu_samples)
-    tau_logp = compute_tau_emcee(hmc_stats["logp_trace"])
     print(f"HMC wall time: {hmc_wall:.2f}s")
     print(f"HMC acceptance rate: {hmc_stats['accept_rate']:.3f}")
     print(f"HMC final step size: {hmc_stats['step_size']:.6f}")
@@ -491,8 +587,17 @@ def main():
     test_metrics = evaluate_binary_probabilistic_predictions(
         y_true=y_test,
         p_pred=predictive_prob,
+        latent_samples=pred_test["latent_samples"],
         threshold=0.5,
         n_bins=15,
+    )
+    print(
+        "Note: negative_log_likelihood_mean uses the posterior mean "
+        "(point estimate, comparable to NN/SVGP point predictions)."
+    )
+    print(
+        "Note: posterior_expected_nll averages -log p(y | f*) over posterior "
+        "latent samples; elpd_per_point is log E[p(y | f*)]."
     )
     print_metric_table(test_metrics, title="Exp2 low-rank HMC GP test metrics")
 
@@ -528,6 +633,7 @@ def main():
     total_wall = time.perf_counter() - wall_t0
     print(f"Total wall-clock time: {total_wall:.2f}s")
     print(f"Saved results to {output_path}")
+    print(f"To reuse HMC samples for re-prediction: python exp2.py --reuse-hmc {output_path} ...")
 
 
 if __name__ == "__main__":

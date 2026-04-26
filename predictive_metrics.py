@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.special import log_expit, logsumexp
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
@@ -38,8 +39,9 @@ def evaluate_binary_probabilistic_predictions(
     p_pred,
     threshold=0.5,
     n_bins=15,
+    latent_samples=None,
 ):
-    """Compute probabilistic and classification metrics."""
+    """Compute point-prediction metrics, plus Bayesian ELPD if latent samples are provided."""
     y_true = np.asarray(y_true).astype(int)
     p_pred = np.asarray(p_pred).astype(float)
     p_pred = np.clip(p_pred, 1e-12, 1.0 - 1e-12)
@@ -72,14 +74,12 @@ def evaluate_binary_probabilistic_predictions(
     except ValueError:
         auprc = np.nan
 
-    return {
-        "log_likelihood_mean": log_likelihood,
-        "negative_log_likelihood_mean": nll,
-        "brier": brier,
-        "ece": ece,
+    metrics = {
+        "accuracy": accuracy,
         "auroc": auroc,
         "auprc": auprc,
-        "accuracy": accuracy,
+        "brier": brier,
+        "ece": ece,
         "number_errors": number_errors,
         "sensitivity_TPR": sensitivity,
         "FNR": fnr,
@@ -89,7 +89,39 @@ def evaluate_binary_probabilistic_predictions(
         "FP": int(fp),
         "TN": int(tn),
         "FN": int(fn),
+        "log_likelihood_mean": log_likelihood,
+        "negative_log_likelihood_mean": nll,
     }
+
+    if latent_samples is not None:
+        latent_samples = np.asarray(latent_samples, dtype=float)
+        if latent_samples.ndim != 2:
+            raise ValueError("latent_samples must have shape (n_samples, n_test)")
+        if latent_samples.shape[1] != y_true.shape[0]:
+            raise ValueError(
+                "latent_samples second dimension must match number of test points: "
+                f"got {latent_samples.shape[1]} and {y_true.shape[0]}"
+            )
+
+        log_p_y = np.where(
+            y_true[None, :] == 1,
+            log_expit(latent_samples),
+            log_expit(-latent_samples),
+        )
+
+        posterior_expected_log_likelihood = float(np.mean(log_p_y))
+        metrics["posterior_expected_log_likelihood"] = posterior_expected_log_likelihood
+        metrics["posterior_expected_nll"] = -posterior_expected_log_likelihood
+
+        # For Bernoulli classification, log E[p(y | f*)] is identical to the
+        # log-likelihood of the posterior mean probability because
+        # E[1 - p] = 1 - E[p]. The posterior-expected log-likelihood above is
+        # the genuinely different uncertainty-sensitive Jensen counterpart.
+        elpd_i = logsumexp(log_p_y, axis=0) - np.log(latent_samples.shape[0])
+        metrics["elpd_total"] = float(np.sum(elpd_i))
+        metrics["elpd_per_point"] = float(np.mean(elpd_i))
+
+    return metrics
 
 
 def summarize_predictive_distribution(
