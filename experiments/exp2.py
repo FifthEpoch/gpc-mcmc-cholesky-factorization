@@ -318,13 +318,20 @@ def run_hmc(
             post_idx += 1
 
     post = slice(n_warmup, total_steps)
+    warmup = slice(0, n_warmup)
+    warmup_time = float(np.sum(step_times[warmup]))
+    sampling_time = float(np.sum(step_times[post]))
     return {
         "nu_samples": nu_samples,
         "logp_trace": logp_trace,
         "accept_rate": float(np.mean(accepts[post])),
         "step_size": float(step_size),
         "per_step_time": float(np.mean(step_times[post])),
-        "total_mcmc_time": float(np.sum(step_times[post])),
+        # Standard timing convention: total_mcmc_time is post-warmup sampling only.
+        "warmup_time": warmup_time,
+        "sampling_time": sampling_time,
+        "total_mcmc_time": sampling_time,
+        "total_sampler_time": warmup_time + sampling_time,
     }
 
 
@@ -343,6 +350,7 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    data_load_start = time.perf_counter()
     factor_dir = Path(args.factor_dir)
     if args.bandwidth is None:
         summary_path = factor_dir / "summary.json"
@@ -396,6 +404,8 @@ def main():
             "to regenerate the factor directory with the pivot kernel submatrix included."
         )
     K_pivots = np.load(kpp_path).astype(np.float64, copy=False)
+    data_loading_time = time.perf_counter() - data_load_start
+
     assert X_train.shape[0] == F.shape[0] == y_train.shape[0], (
         f"Misaligned training arrays: X_train={X_train.shape[0]}, "
         f"F={F.shape[0]}, y_train={y_train.shape[0]}. "
@@ -444,7 +454,6 @@ def main():
         f"target_accept={args.hmc_target_accept:.3f}, adapt={args.adapt_step_size}"
     )
 
-    hmc_t0 = time.perf_counter()
     hmc_stats = run_hmc(
         factor=F_hmc,
         y=y_train,
@@ -456,12 +465,12 @@ def main():
         target_accept=args.hmc_target_accept,
         adapt_step_size=args.adapt_step_size,
     )
-    hmc_wall = time.perf_counter() - hmc_t0
 
     nu_samples = hmc_stats["nu_samples"]
     tau_nu = compute_tau_emcee(nu_samples)
     tau_logp = compute_tau_emcee(hmc_stats["logp_trace"])
-    print(f"HMC wall time: {hmc_wall:.2f}s")
+    print(f"HMC warmup time: {hmc_stats['warmup_time']:.2f}s")
+    print(f"HMC sampling time: {hmc_stats['sampling_time']:.2f}s")
     print(f"HMC acceptance rate: {hmc_stats['accept_rate']:.3f}")
     print(f"HMC final step size: {hmc_stats['step_size']:.6f}")
     print(f"HMC tau (nu mean): {tau_nu:.2f}")
@@ -480,8 +489,10 @@ def main():
         batch_size=args.prediction_batch_size,
         seed=999,
     )
-    print(f"Predictive sampling time: {time.perf_counter() - t_pred_start:.2f}s")
+    inference_time = time.perf_counter() - t_pred_start
+    print(f"Predictive sampling time: {inference_time:.2f}s")
 
+    evaluation_start = time.perf_counter()
     pred_summary = summarize_predictive_distribution(
         p_samples=pred_test["p_samples"],
         latent_samples=pred_test["latent_samples"],
@@ -495,6 +506,9 @@ def main():
         n_bins=15,
     )
     print_metric_table(test_metrics, title="Exp2 low-rank HMC GP test metrics")
+    evaluation_time = time.perf_counter() - evaluation_start
+
+    total_wall = time.perf_counter() - wall_t0
 
     output_path = output_dir / f"exp2_k{args.k}_results.npz"
     np.savez(
@@ -522,10 +536,22 @@ def main():
         pivot_indices=pivot_indices,
         n_train=n_train,
         n_test=n_test,
+        timing_scope="precomputed_factor_load, hmc_warmup, hmc_sampling, predictive_sampling, evaluation",
+        data_loading_time_sec=data_loading_time,
+        factor_time_sec=0.0,
+        warmup_time_sec=hmc_stats["warmup_time"],
+        sampling_time_sec=hmc_stats["sampling_time"],
+        per_step_time_sec=hmc_stats["per_step_time"],
+        total_mcmc_time_sec=hmc_stats["total_mcmc_time"],
+        inference_time_sec=inference_time,
+        evaluation_time_sec=evaluation_time,
+        total_pipeline_time_sec=total_wall,
+        total_model_compute_time_sec=(
+            hmc_stats["total_sampler_time"] + inference_time + evaluation_time
+        ),
         **test_metrics,
     )
 
-    total_wall = time.perf_counter() - wall_t0
     print(f"Total wall-clock time: {total_wall:.2f}s")
     print(f"Saved results to {output_path}")
 
