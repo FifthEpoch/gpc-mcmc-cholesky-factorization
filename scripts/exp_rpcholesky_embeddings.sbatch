@@ -3,10 +3,11 @@
 #SBATCH --account=csci_ga_2565-2026sp
 #SBATCH --partition=c12m85-a100-1
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
-#SBATCH --time=24:00:00
-#SBATCH --mem=96G
+#SBATCH --time=06:00:00
+#SBATCH --mem=64G
+#SBATCH --gres=gpu:1
 #SBATCH --output=slurm_logs/rpcholesky_embeddings/%x_%j.out
 #SBATCH --error=slurm_logs/rpcholesky_embeddings/%x_%j.err
 
@@ -100,7 +101,7 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export MPLCONFIGDIR="${TMPDIR:-/tmp}/mpl-${SLURM_JOB_ID:-$$}"
 
-mkdir -p "${PROJECT_ROOT}/slurm_logs/rpcholesky_embeddings"
+mkdir -p "${PROJECT_ROOT}/slurm_logs"
 mkdir -p "${MPLCONFIGDIR}"
 
 PYTHON="${CONDA_PREFIX}/bin/python"
