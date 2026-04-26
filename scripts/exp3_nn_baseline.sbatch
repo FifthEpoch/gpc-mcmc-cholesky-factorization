@@ -6,8 +6,8 @@
 #SBATCH --time=06:00:00
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
-#SBATCH --output=slurm_logs/%x_%j.out
-#SBATCH --error=slurm_logs/%x_%j.err
+#SBATCH --output=slurm_logs/exp_3_nn_ting/%x_%j.out
+#SBATCH --error=slurm_logs/exp_3_nn_ting/%x_%j.err
 
 set -euo pipefail
 export PYTHONNOUSERSITE=1
@@ -21,17 +21,16 @@ export PYTHONNOUSERSITE=1
 # Optional overrides:
 #   DATASET       pcam | camelyon17 | embed          (default: pcam)
 #   ENCODER       densenet121 | dinov2_vitl14        (default: densenet121)
-#   EMBEDDING_DIR path to embedding root              (default: data/embeddings)
+#   EMBEDDING_DIR path to embedding root             (default: dataset-specific HG root when present)
 #   MODEL_ARCH    residual_mlp | mlp | linear        (default: residual_mlp)
-#   HIDDEN_DIM    classifier hidden width             (default: 512)
-#   NUM_LAYERS    residual blocks for residual_mlp    (default: 3)
-#   DROPOUT       classifier dropout                  (default: 0.3)
-#   LR            AdamW learning rate                 (default: 1e-3)
-#   WEIGHT_DECAY  AdamW weight decay                  (default: 1e-4)
-#   EPOCHS        max classifier epochs               (default: 50)
-#   PATIENCE      early-stopping patience             (default: 5)
-#   BATCH_SIZE    embedding batch size                (default: 512)
-#   EMBEDDING_DIR path to embedding root             (default: datasets if HG layout exists)
+#   HIDDEN_DIM    classifier hidden width            (default: 512)
+#   NUM_LAYERS    residual blocks for residual_mlp   (default: 3)
+#   DROPOUT       classifier dropout                 (default: 0.3)
+#   LR            AdamW learning rate                (default: 1e-3)
+#   WEIGHT_DECAY  AdamW weight decay                 (default: 1e-4)
+#   EPOCHS        max classifier epochs              (default: 50)
+#   PATIENCE      early-stopping patience            (default: 5)
+#   BATCH_SIZE    embedding batch size               (default: 512)
 #   CONDA_ENV     /path/to/env                       (auto-detected)
 #   PROJECT_ROOT  /path/to/project                   (auto-detected)
 #   SKIP_EMBED    1                                  (skip embedding extraction; auto-set for HG layout)
@@ -44,8 +43,6 @@ fi
 
 DATASET="${DATASET:-pcam}"
 ENCODER="${ENCODER:-densenet121}"
-SKIP_EMBED="${SKIP_EMBED:-0}"
-EMBEDDING_DIR="${EMBEDDING_DIR:-data/embeddings}"
 MODEL_ARCH="${MODEL_ARCH:-residual_mlp}"
 HIDDEN_DIM="${HIDDEN_DIM:-512}"
 NUM_LAYERS="${NUM_LAYERS:-3}"
@@ -61,16 +58,37 @@ PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
 
 if [ -z "${EMBEDDING_DIR:-}" ]; then
-  if [ -d "${PROJECT_ROOT}/datasets/pcam-hg/train/embeddings" ] || [ -d "${PROJECT_ROOT}/datasets/camelyon17-hg/train/embeddings" ]; then
-    EMBEDDING_DIR="datasets"
-  else
-    EMBEDDING_DIR="data/embeddings"
-  fi
+  case "${DATASET}" in
+    pcam)
+      if [ -d "${PROJECT_ROOT}/datasets/pcam-hg/train/embeddings" ]; then
+        EMBEDDING_DIR="datasets/pcam-hg"
+      else
+        EMBEDDING_DIR="data/embeddings"
+      fi
+      ;;
+    camelyon17)
+      if [ -d "${PROJECT_ROOT}/datasets/camelyon17-hg/train/embeddings" ]; then
+        EMBEDDING_DIR="datasets/camelyon17-hg"
+      else
+        EMBEDDING_DIR="data/embeddings"
+      fi
+      ;;
+    embed)
+      if [ -d "${PROJECT_ROOT}/datasets/embed/train/embeddings" ]; then
+        EMBEDDING_DIR="datasets/embed"
+      else
+        EMBEDDING_DIR="data/embeddings"
+      fi
+      ;;
+    *)
+      EMBEDDING_DIR="data/embeddings"
+      ;;
+  esac
 fi
 
 if [ -z "${SKIP_EMBED:-}" ]; then
   case "${EMBEDDING_DIR}" in
-    datasets|*pcam-hg|*camelyon17-hg|*embed)
+    *pcam-hg|*camelyon17-hg|*embed)
       SKIP_EMBED=1
       ;;
     *)
@@ -153,6 +171,7 @@ echo "Hidden dim   : ${HIDDEN_DIM}"
 echo "Layers       : ${NUM_LAYERS}"
 echo "Dropout      : ${DROPOUT}"
 echo "Embed dir    : ${EMBEDDING_DIR}"
+echo "Embed path   : ${PROJECT_ROOT}/${EMBEDDING_DIR}"
 echo "Skip embed   : ${SKIP_EMBED}"
 echo "=============================================================================="
 
