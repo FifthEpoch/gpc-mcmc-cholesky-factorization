@@ -8,18 +8,26 @@ Experiment 1b: compare three samplers on the RPCholesky GP classification target
 This keeps the same non-centered parameterization f = F @ nu used in the
 other experiments. emcee drives the RWM and MALA runs; HMC is added directly
 because emcee does not provide an HMC kernel.
+
+Example:
+    python experiments/exp1c_emcee_real_data.py \
+        --factor-dir data/precomputed_factors \
+        --embeddings data/embeddings.npy
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
 import emcee
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.special import expit
+from scipy.stats import norm
 
 
 # Allow direct script execution without package install.
@@ -28,57 +36,156 @@ SRC_PATH = os.path.join(PROJECT_ROOT, "src")
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
 
-from my_cholesky.arpcholesky import arpcholesky
-from my_cholesky.matrix import KernelMatrix
-
-
-def make_fake_blobs(seed: int = 42):
-    """Generate N=2000 two-blob binary data in R^2."""
-    rng = np.random.default_rng(seed)
-    n_per_class = 1000
-    cov = 0.5 * np.eye(2)
-    x0 = rng.multivariate_normal(mean=[-1.0, 0.0], cov=cov, size=n_per_class)
-    x1 = rng.multivariate_normal(mean=[1.0, 0.0], cov=cov, size=n_per_class)
-    X = np.vstack([x0, x1])
-    y = np.concatenate(
-        [np.zeros(n_per_class, dtype=int), np.ones(n_per_class, dtype=int)]
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Compare emcee and HMC samplers on precomputed low-rank factors."
     )
-    return X, y
+    parser.add_argument(
+        "--factor-dir",
+        type=str,
+        required=True,
+        help="Directory containing factor_k{k}.npy and labels.npy",
+    )
+    parser.add_argument(
+        "--embeddings",
+        type=str,
+        default=None,
+        help="Optional path to original embeddings .npy for final scatter plot",
+    )
+    parser.add_argument(
+        "--k-values",
+        type=int,
+        nargs="+",
+        default=[10, 20, 50, 100, 200],
+    )
+    parser.add_argument("--n-samples", type=int, default=20000)
+    parser.add_argument("--n-warmup", type=int, default=200)
+    parser.add_argument("--output-dir", type=str, default="data")
+    parser.add_argument(
+        "--likelihood",
+        type=str,
+        choices=["sigmoid", "probit"],
+        default="probit",
+        help="Bernoulli likelihood link function.",
+    )
+    parser.add_argument(
+        "--rwm-step-constant",
+        type=float,
+        default=0.8,
+        help="Constant for RWM step size: constant / sqrt(actual_rank).",
+    )
+    parser.add_argument(
+        "--mala-step-constant",
+        type=float,
+        default=0.243,
+        help="Constant for MALA step size: constant / actual_rank^(1/3).",
+    )
+    parser.add_argument(
+        "--hmc-step-constant",
+        type=float,
+        default=0.05,
+        help="Initial HMC step constant: constant / actual_rank^(1/4).",
+    )
+    parser.add_argument(
+        "--hmc-target-accept",
+        type=float,
+        default=0.8,
+        help="Target HMC acceptance probability for dual averaging warmup.",
+    )
+    parser.add_argument(
+        "--no-hmc-adapt-step-size",
+        action="store_false",
+        dest="hmc_adapt_step_size",
+        help="Disable HMC dual averaging step-size adaptation during warmup.",
+    )
+    return parser.parse_args()
 
 
-def log_posterior(nu: np.ndarray, factor: np.ndarray, y: np.ndarray) -> float:
+def pca_project_2d(X: np.ndarray) -> np.ndarray:
+    Xc = X - X.mean(axis=0, keepdims=True)
+    _, _, vt = np.linalg.svd(Xc, full_matrices=False)
+    return Xc @ vt[:2, :].T
+
+
+
+def log_posterior(
+    nu: np.ndarray,
+    factor: np.ndarray,
+    y: np.ndarray,
+    likelihood: str,
+) -> float:
     """Log posterior for Bernoulli likelihood and standard normal prior."""
     f = factor @ nu
-    p = expit(f)
-    log_lik = np.sum(y * np.log(p + 1e-10) + (1 - y) * np.log(1 - p + 1e-10))
+    if likelihood == "sigmoid":
+        p = expit(f)
+        log_lik = np.sum(y * np.log(p + 1e-10) + (1 - y) * np.log(1 - p + 1e-10))
+    elif likelihood == "probit":
+        log_lik = np.sum(y * norm.logcdf(f) + (1 - y) * norm.logcdf(-f))
+    else:
+        raise ValueError(f"Unknown likelihood: {likelihood}")
     log_prior = -0.5 * np.dot(nu, nu)
     return float(log_lik + log_prior)
 
 
-def log_posterior_batch(coords: np.ndarray, factor: np.ndarray, y: np.ndarray) -> np.ndarray:
+def log_posterior_batch(
+    coords: np.ndarray,
+    factor: np.ndarray,
+    y: np.ndarray,
+    likelihood: str,
+) -> np.ndarray:
     """Vectorized log posterior over shape (nwalkers, dim)."""
     f = coords @ factor.T
-    p = expit(f)
-    log_lik = np.sum(y[None, :] * np.log(p + 1e-10), axis=1)
-    log_lik += np.sum((1 - y)[None, :] * np.log(1 - p + 1e-10), axis=1)
+    if likelihood == "sigmoid":
+        p = expit(f)
+        log_lik = np.sum(y[None, :] * np.log(p + 1e-10), axis=1)
+        log_lik += np.sum((1 - y)[None, :] * np.log(1 - p + 1e-10), axis=1)
+    elif likelihood == "probit":
+        log_lik = np.sum(y[None, :] * norm.logcdf(f), axis=1)
+        log_lik += np.sum((1 - y)[None, :] * norm.logcdf(-f), axis=1)
+    else:
+        raise ValueError(f"Unknown likelihood: {likelihood}")
     log_prior = -0.5 * np.sum(coords * coords, axis=1)
     return log_lik + log_prior
 
 
 def grad_log_posterior_batch(
-    coords: np.ndarray, factor: np.ndarray, y: np.ndarray
+    coords: np.ndarray,
+    factor: np.ndarray,
+    y: np.ndarray,
+    likelihood: str,
 ) -> np.ndarray:
     """Vectorized gradient wrt nu for shape (nwalkers, dim)."""
     f = coords @ factor.T
-    p = expit(f)
-    return (y[None, :] - p) @ factor - coords
+    if likelihood == "sigmoid":
+        p = expit(f)
+        grad_f = y[None, :] - p
+    elif likelihood == "probit":
+        imr_pos = np.exp(norm.logpdf(f) - norm.logcdf(f))
+        imr_neg = np.exp(norm.logpdf(-f) - norm.logcdf(-f))
+        grad_f = y[None, :] * imr_pos - (1 - y)[None, :] * imr_neg
+    else:
+        raise ValueError(f"Unknown likelihood: {likelihood}")
+    return grad_f @ factor - coords
 
 
-def grad_log_posterior(nu: np.ndarray, factor: np.ndarray, y: np.ndarray) -> np.ndarray:
+def grad_log_posterior(
+    nu: np.ndarray,
+    factor: np.ndarray,
+    y: np.ndarray,
+    likelihood: str,
+) -> np.ndarray:
     """Gradient wrt a single latent vector nu."""
     f = factor @ nu
-    p = expit(f)
-    return factor.T @ (y - p) - nu
+    if likelihood == "sigmoid":
+        p = expit(f)
+        grad_f = y - p
+    elif likelihood == "probit":
+        imr_pos = np.exp(norm.logpdf(f) - norm.logcdf(f))
+        imr_neg = np.exp(norm.logpdf(-f) - norm.logcdf(-f))
+        grad_f = y * imr_pos - (1 - y) * imr_neg
+    else:
+        raise ValueError(f"Unknown likelihood: {likelihood}")
+    return factor.T @ grad_f - nu
 
 
 def compute_tau_emcee(chain: np.ndarray) -> float:
@@ -94,15 +201,9 @@ def compute_tau_emcee(chain: np.ndarray) -> float:
         return float("nan")
 
     tau = np.asarray(tau, dtype=float).reshape(-1)
-    
-    # Filter out non-finite values
-    tau = tau[np.isfinite(tau)]
-    
     if tau.size == 0:
         return float("nan")
-    
-    # Return the maximum tau (most conservative estimate)
-    return float(np.max(tau))
+    return float(np.nanmean(tau))
 
 
 def compute_ess_from_tau(n_steps: int, n_walkers: int, tau: float) -> float:
@@ -116,6 +217,7 @@ def posterior_mean_prob(
     factor: np.ndarray,
     nu_samples: np.ndarray,
     seed: int,
+    likelihood: str,
     max_draws: int = 400,
 ) -> np.ndarray:
     """Estimate mean posterior class probabilities at observed inputs."""
@@ -131,23 +233,30 @@ def posterior_mean_prob(
         nu_use = nu_samples
 
     logits = factor @ nu_use.T
-    return np.mean(expit(logits), axis=1)
+    if likelihood == "sigmoid":
+        probs = expit(logits)
+    elif likelihood == "probit":
+        probs = norm.cdf(logits)
+    else:
+        raise ValueError(f"Unknown likelihood: {likelihood}")
+    return np.mean(probs, axis=1)
 
 
 def make_mala_move(
     factor: np.ndarray,
     y: np.ndarray,
     step_size: float,
+    likelihood: str,
 ) -> emcee.moves.MHMove:
     """Create an emcee MH move that uses a MALA proposal."""
 
     def proposal_function(coords: np.ndarray, random) -> tuple[np.ndarray, np.ndarray]:
-        grads = grad_log_posterior_batch(coords, factor, y)
+        grads = grad_log_posterior_batch(coords, factor, y, likelihood)
         noise = random.randn(*coords.shape)
         drift = 0.5 * (step_size**2) * grads
         proposals = coords + drift + step_size * noise
 
-        prop_grads = grad_log_posterior_batch(proposals, factor, y)
+        prop_grads = grad_log_posterior_batch(proposals, factor, y, likelihood)
 
         forward_diff = proposals - coords - drift
         reverse_diff = coords - proposals - 0.5 * (step_size**2) * prop_grads
@@ -169,6 +278,7 @@ def run_emcee_sampler(
     n_walkers: int,
     seed: int,
     move,
+    likelihood: str,
     init_scale: float = 0.1,
 ) -> dict:
     """Run emcee and return timing/statistics."""
@@ -180,7 +290,7 @@ def run_emcee_sampler(
         nwalkers=n_walkers,
         ndim=dim,
         log_prob_fn=log_posterior_batch,
-        args=(factor, y),
+        args=(factor, y, likelihood),
         moves=move,
         vectorize=True,
     )
@@ -203,8 +313,6 @@ def run_emcee_sampler(
         "per_step_time": float(sample_time / max(n_samples, 1)),
         "total_mcmc_time": float(sample_time),
         "warmup_time": float(warmup_time),
-        "sampling_time": float(sample_time),
-        "total_sampler_time": float(warmup_time + sample_time),
         "accept_rate": float(np.mean(sampler.acceptance_fraction)),
         "nu_samples": flat_chain,
         "chain": chain,
@@ -220,8 +328,11 @@ def run_hmc(
     n_samples: int,
     n_warmup: int,
     seed: int,
-    step_size: float,
+    initial_step_size: float,
     n_leapfrog: int,
+    likelihood: str,
+    target_accept: float = 0.8,
+    adapt_step_size: bool = True,
 ) -> dict:
     """Run a simple Euclidean HMC sampler with fixed mass matrix."""
     rng = np.random.default_rng(seed)
@@ -229,7 +340,7 @@ def run_hmc(
     total_steps = n_warmup + n_samples
 
     nu = np.zeros(dim, dtype=float)
-    logp = log_posterior(nu, factor, y)
+    logp = log_posterior(nu, factor, y, likelihood)
 
     step_times = np.zeros(total_steps, dtype=float)
     logp_trace = np.zeros(total_steps, dtype=float)
@@ -237,36 +348,55 @@ def run_hmc(
     nu_samples = np.zeros((n_samples, dim), dtype=float)
     post_idx = 0
 
+    step_size = initial_step_size
+    log_step = np.log(initial_step_size)
+    mu = np.log(10 * initial_step_size)
+    log_step_bar = 0.0
+    H_bar = 0.0
+    gamma, t0_dual, kappa = 0.05, 10, 0.75
+
     for i in range(total_steps):
         t0 = time.perf_counter()
+        if adapt_step_size and n_warmup > 0:
+            if i < n_warmup:
+                step_size = np.exp(log_step)
+            elif i == n_warmup:
+                step_size = np.exp(log_step_bar)
 
         current_nu = nu.copy()
         current_logp = logp
         momentum = rng.standard_normal(dim)
-        current_momentum = momentum.copy()
 
-        grad = grad_log_posterior(current_nu, factor, y)
+        grad = grad_log_posterior(current_nu, factor, y, likelihood)
         proposal_nu = current_nu.copy()
         proposal_p = momentum + 0.5 * step_size * grad
 
         for leapfrog_idx in range(n_leapfrog):
             proposal_nu = proposal_nu + step_size * proposal_p
-            grad = grad_log_posterior(proposal_nu, factor, y)
+            grad = grad_log_posterior(proposal_nu, factor, y, likelihood)
             if leapfrog_idx != n_leapfrog - 1:
                 proposal_p = proposal_p + step_size * grad
 
         proposal_p = proposal_p + 0.5 * step_size * grad
         proposal_p = -proposal_p
 
-        proposal_logp = log_posterior(proposal_nu, factor, y)
-        current_h = -current_logp + 0.5 * np.dot(current_momentum, current_momentum)
+        proposal_logp = log_posterior(proposal_nu, factor, y, likelihood)
+        current_h = -current_logp + 0.5 * np.dot(momentum, momentum)
         proposal_h = -proposal_logp + 0.5 * np.dot(proposal_p, proposal_p)
         log_accept = current_h - proposal_h
+        accept_prob = 1.0 if log_accept >= 0.0 else float(np.exp(log_accept))
 
         if np.log(rng.random()) < log_accept:
             nu = proposal_nu
             logp = proposal_logp
             accepts[i] = True
+
+        if adapt_step_size and i < n_warmup:
+            eta = 1.0 / (i + 1 + t0_dual)
+            H_bar = (1 - eta) * H_bar + eta * (target_accept - accept_prob)
+            log_step = mu - np.sqrt(i + 1) / gamma * H_bar
+            eta_bar = (i + 1) ** (-kappa)
+            log_step_bar = eta_bar * log_step + (1 - eta_bar) * log_step_bar
 
         step_times[i] = time.perf_counter() - t0
         logp_trace[i] = logp
@@ -275,18 +405,13 @@ def run_hmc(
             post_idx += 1
 
     post = slice(n_warmup, total_steps)
-    warmup = slice(0, n_warmup)
-    warmup_time = float(np.sum(step_times[warmup]))
     per_step_time = float(np.mean(step_times[post]))
-    sampling_time = float(np.sum(step_times[post]))
+    total_mcmc_time = float(np.sum(step_times[post]))
     accept_rate = float(np.mean(accepts[post]))
 
     return {
         "per_step_time": per_step_time,
-        "warmup_time": warmup_time,
-        "sampling_time": sampling_time,
-        "total_mcmc_time": sampling_time,
-        "total_sampler_time": warmup_time + sampling_time,
+        "total_mcmc_time": total_mcmc_time,
         "accept_rate": accept_rate,
         "logp_trace": logp_trace,
         "nu_samples": nu_samples,
@@ -295,39 +420,75 @@ def run_hmc(
     }
 
 
+def warn_if_acceptance_outside_band(
+    sampler: str,
+    accept_rate: float,
+    lower: float,
+    upper: float,
+) -> None:
+    if lower <= accept_rate <= upper:
+        return
+    direction = "below" if accept_rate < lower else "above"
+    step_hint = "too large" if accept_rate < lower else "too small"
+    print(
+        f"  WARNING: {sampler} acceptance {accept_rate:.3f} {direction} target band "
+        f"[{lower:.2f}, {upper:.2f}] - step size likely {step_hint}"
+    )
+
+
 def main() -> None:
-    data_dir = os.path.join(PROJECT_ROOT, "data")
-    os.makedirs(data_dir, exist_ok=True)
+    args = parse_args()
+    data_dir = Path(args.output_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
 
-    n_samples = 5000
-    n_warmup = 200
-    k_values = [10, 20, 50, 100, 200]
+    n_samples = args.n_samples
+    n_warmup = args.n_warmup
+    k_values = args.k_values
+    likelihood = args.likelihood
+    output_suffix = f"_{likelihood}"
 
-    X, y = make_fake_blobs(seed=42)
-    A = KernelMatrix(X, kernel="gaussian", bandwidth=1.0)
+    print(f"Likelihood: {likelihood}")
+
+    factor_dir = Path(args.factor_dir)
+    y = np.load(factor_dir / "labels.npy").astype(np.float64)
+
+    X_2d = None
+    if args.embeddings is not None:
+        embeddings_path = Path(args.embeddings)
+        if embeddings_path.exists():
+            X = np.load(embeddings_path)
+            X_2d = pca_project_2d(X)
+        else:
+            print(f"WARNING: embeddings file {embeddings_path} not found; skipping scatter plot")
+
     results = []
-    trace_example = {}
-    posterior_k200 = {}
+    posterior_largest_k = {}
+    largest_posterior_k = None
+    posterior_plot_saved = False
 
     for k in k_values:
-        factor_start = time.perf_counter()
-        lra = arpcholesky(A, k=k, b=10)
-        F = lra.get_left_factor()
-        factor_time = time.perf_counter() - factor_start
+        factor_path = factor_dir / f"factor_k{k}.npy"
+        if not factor_path.exists():
+            print(f"WARNING: {factor_path} not found, skipping k={k}")
+            continue
+
+        F = np.load(factor_path).astype(np.float64)
         dim = F.shape[1]
-        n_walkers = max(2 * dim + 2, 24)
+        n_walkers = min(max(2 * dim + 2, 24), 100)
 
-        rwm_scale = 1.2
-        mala_scale = 1.5
-        hmc_scale = 0.5
-
-        gaussian_step = (rwm_scale / np.sqrt(dim)) ** 2
-        
-        mala_step = mala_scale / np.sqrt(dim)
+        actual_rank = max(dim, 1)
+        rwm_step = args.rwm_step_constant / (actual_rank**0.5)
+        gaussian_step = rwm_step**2
+        mala_step = args.mala_step_constant / (actual_rank ** (1 / 3))
+        hmc_step = args.hmc_step_constant / (actual_rank**0.25)
+        print(
+            f"k={k} actual_rank={dim}: RWM step={rwm_step:.4f}, "
+            f"MALA step={mala_step:.4f}, HMC step={hmc_step:.4f}"
+        )
 
         # emcee's GaussianMove is exactly a Gaussian random-walk MH proposal here.
         gaussian_move = emcee.moves.GaussianMove(cov=gaussian_step, mode="vector")
-        mala_move = make_mala_move(F, y, step_size=mala_step)
+        mala_move = make_mala_move(F, y, step_size=mala_step, likelihood=likelihood)
 
         gaussian_stats = run_emcee_sampler(
             F,
@@ -337,6 +498,7 @@ def main() -> None:
             n_walkers=n_walkers,
             seed=1000 + k,
             move=gaussian_move,
+            likelihood=likelihood,
         )
         mala_stats = run_emcee_sampler(
             F,
@@ -346,8 +508,8 @@ def main() -> None:
             n_walkers=n_walkers,
             seed=2000 + k,
             move=mala_move,
+            likelihood=likelihood,
         )
-        hmc_step = hmc_scale / np.sqrt(max(dim, 1))
         hmc_leapfrog = 12
         hmc_stats = run_hmc(
             F,
@@ -355,13 +517,16 @@ def main() -> None:
             n_samples=n_samples,
             n_warmup=n_warmup,
             seed=3000 + k,
-            step_size=hmc_step,
+            initial_step_size=hmc_step,
             n_leapfrog=hmc_leapfrog,
+            likelihood=likelihood,
+            target_accept=args.hmc_target_accept,
+            adapt_step_size=args.hmc_adapt_step_size,
         )
 
         tau_gaussian = compute_tau_emcee(gaussian_stats["logp_by_walker"])
         tau_mala = compute_tau_emcee(mala_stats["logp_by_walker"])
-        tau_hmc = compute_tau_emcee(hmc_stats["logp_trace"][n_warmup:, None])
+        tau_hmc = compute_tau_emcee(hmc_stats["logp_trace"][..., None])
         ess_gaussian = compute_ess_from_tau(n_samples, n_walkers, tau_gaussian)
         ess_mala = compute_ess_from_tau(n_samples, n_walkers, tau_mala)
         ess_hmc = compute_ess_from_tau(n_samples, 1, tau_hmc)
@@ -373,16 +538,13 @@ def main() -> None:
         results.append(
             {
                 "k": dim,
+                "likelihood": likelihood,
                 "sampler": "emcee-RWM",
                 "n_walkers": n_walkers,
-                "step_size": float(np.sqrt(gaussian_step)),
-                "factor_time": float(factor_time),
-                "warmup_time": gaussian_stats["warmup_time"],
-                "sampling_time": gaussian_stats["sampling_time"],
+                "step_size": float(rwm_step),
                 "accept_rate": gaussian_stats["accept_rate"],
                 "per_step_time": gaussian_stats["per_step_time"],
                 "total_time": gaussian_stats["total_mcmc_time"],
-                "total_model_compute_time": float(factor_time) + gaussian_stats["total_sampler_time"],
                 "ess_logp": ess_gaussian,
                 "ess_per_sec": essps_gaussian,
                 "tau": tau_gaussian,
@@ -391,16 +553,13 @@ def main() -> None:
         results.append(
             {
                 "k": dim,
+                "likelihood": likelihood,
                 "sampler": "emcee-MALA",
                 "n_walkers": n_walkers,
                 "step_size": mala_step,
-                "factor_time": float(factor_time),
-                "warmup_time": mala_stats["warmup_time"],
-                "sampling_time": mala_stats["sampling_time"],
                 "accept_rate": mala_stats["accept_rate"],
                 "per_step_time": mala_stats["per_step_time"],
                 "total_time": mala_stats["total_mcmc_time"],
-                "total_model_compute_time": float(factor_time) + mala_stats["total_sampler_time"],
                 "ess_logp": ess_mala,
                 "ess_per_sec": essps_mala,
                 "tau": tau_mala,
@@ -409,50 +568,62 @@ def main() -> None:
         results.append(
             {
                 "k": dim,
+                "likelihood": likelihood,
                 "sampler": "HMC",
                 "n_walkers": 1,
                 "step_size": hmc_stats["step_size"],
-                "factor_time": float(factor_time),
-                "warmup_time": hmc_stats["warmup_time"],
-                "sampling_time": hmc_stats["sampling_time"],
                 "accept_rate": hmc_stats["accept_rate"],
                 "per_step_time": hmc_stats["per_step_time"],
                 "total_time": hmc_stats["total_mcmc_time"],
-                "total_model_compute_time": float(factor_time) + hmc_stats["total_sampler_time"],
                 "ess_logp": ess_hmc,
                 "ess_per_sec": essps_hmc,
                 "tau": tau_hmc,
             }
         )
 
-        if dim == 50:
-            trace_example["RWM"] = gaussian_stats["logp_trace"]
-            trace_example["MALA"] = mala_stats["logp_trace"]
-            trace_example["HMC"] = hmc_stats["logp_trace"][n_warmup:]
+        warn_if_acceptance_outside_band(
+            "RWM", gaussian_stats["accept_rate"], lower=0.15, upper=0.35
+        )
+        warn_if_acceptance_outside_band(
+            "MALA", mala_stats["accept_rate"], lower=0.45, upper=0.70
+        )
+        warn_if_acceptance_outside_band(
+            "HMC", hmc_stats["accept_rate"], lower=0.70, upper=0.90
+        )
 
-        if dim == 200:
-            posterior_k200["RWM"] = posterior_mean_prob(
+        if largest_posterior_k is None or dim > largest_posterior_k:
+            largest_posterior_k = dim
+            posterior_largest_k["RWM"] = posterior_mean_prob(
                 F,
                 gaussian_stats["nu_samples"],
                 seed=4000 + k,
+                likelihood=likelihood,
             )
-            posterior_k200["MALA"] = posterior_mean_prob(
+            posterior_largest_k["MALA"] = posterior_mean_prob(
                 F,
                 mala_stats["nu_samples"],
                 seed=5000 + k,
+                likelihood=likelihood,
             )
-            posterior_k200["HMC"] = posterior_mean_prob(
+            posterior_largest_k["HMC"] = posterior_mean_prob(
                 F,
                 hmc_stats["nu_samples"],
                 seed=6000 + k,
+                likelihood=likelihood,
             )
 
-    fmt = "{:<18} {:>8} {:>10} {:>8} {:>12} {:>10} {:>10} {:>8}"
-    for k in k_values:
+    available_k_values = sorted({int(r["k"]) for r in results})
+    if not available_k_values:
+        print("No factor files were loaded successfully; exiting without plots.")
+        return
+
+    fmt = "{:<18} {:<9} {:>8} {:>10} {:>8} {:>12} {:>10} {:>10} {:>8}"
+    for k in available_k_values:
         print(f"k={k}")
         print(
             fmt.format(
                 "Sampler",
+                "Likelihood",
                 "Walkers",
                 "Step size",
                 "Accept",
@@ -462,10 +633,11 @@ def main() -> None:
                 "tau",
             )
         )
-        for row in [r for r in results if r["k"] == k]:
+        for row in [r for r in results if int(r["k"]) == k]:
             print(
                 fmt.format(
                     row["sampler"],
+                    row["likelihood"],
                     f"{row['n_walkers']}",
                     f"{row['step_size']:.4f}",
                     f"{row['accept_rate']:.3f}",
@@ -481,7 +653,7 @@ def main() -> None:
         return np.array(
             [
                 next(r for r in results if r["k"] == k and r["sampler"] == sampler)[metric]
-                for k in k_values
+                for k in available_k_values
             ],
             dtype=float,
         )
@@ -500,79 +672,59 @@ def main() -> None:
     step_hmc = series("per_step_time", "HMC")
 
     plt.figure(figsize=(7, 4))
-    plt.plot(k_values, essps_gaussian, marker="o", color="tab:gray", label="emcee RWM")
-    plt.plot(k_values, essps_mala, marker="o", color="tab:orange", label="emcee MALA")
-    plt.plot(k_values, essps_hmc, marker="o", color="tab:green", label="HMC")
+    plt.plot(available_k_values, essps_gaussian, marker="o", color="tab:gray", label="emcee RWM")
+    plt.plot(available_k_values, essps_mala, marker="o", color="tab:orange", label="emcee MALA")
+    plt.plot(available_k_values, essps_hmc, marker="o", color="tab:green", label="HMC")
     plt.xlabel("k")
     plt.ylabel("ESS per second")
     plt.title("Sampler efficiency vs rank k")
     plt.grid(alpha=0.3)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(data_dir, "exp1b_emcee_ess_per_sec_vs_k.png"), dpi=160)
+    plt.savefig(data_dir / f"exp1b_emcee_ess_per_sec_vs_k{output_suffix}.png", dpi=160)
     plt.close()
 
-    plt.figure(figsize=(7, 4))
-    plt.plot(k_values, tau_gaussian, marker="o", color="tab:gray", label="emcee RWM")
-    plt.plot(k_values, tau_mala, marker="o", color="tab:orange", label="emcee MALA")
-    plt.plot(k_values, tau_hmc, marker="o", color="tab:green", label="HMC")
-    plt.xlabel("k")
-    plt.ylabel("Integrated autocorrelation time (tau)")
-    plt.title("Sampler tau vs rank k")
-    plt.grid(alpha=0.3)
-    plt.legend()
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharex=True)
+    diagnostic_panels = [
+        (
+            axes[0],
+            (tau_gaussian, tau_mala, tau_hmc),
+            "Integrated autocorrelation time (tau)",
+            "Sampler tau vs rank k",
+        ),
+        (
+            axes[1],
+            (accept_gaussian, accept_mala, accept_hmc),
+            "Acceptance rate",
+            "Sampler acceptance rate vs rank k",
+        ),
+        (
+            axes[2],
+            (step_gaussian, step_mala, step_hmc),
+            "Per-step runtime (s)",
+            "Sampler per-step runtime vs rank k",
+        ),
+    ]
+    for ax, values, ylabel, title in diagnostic_panels:
+        ax.plot(available_k_values, values[0], marker="o", color="tab:gray", label="emcee RWM")
+        ax.plot(available_k_values, values[1], marker="o", color="tab:orange", label="emcee MALA")
+        ax.plot(available_k_values, values[2], marker="o", color="tab:green", label="HMC")
+        ax.set_xlabel("k")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.grid(alpha=0.3)
+        ax.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(data_dir, "exp1b_emcee_tau_vs_k.png"), dpi=160)
-    plt.close()
-
-    plt.figure(figsize=(7, 4))
-    plt.plot(k_values, step_gaussian, marker="o", color="tab:gray", label="emcee RWM")
-    plt.plot(k_values, step_mala, marker="o", color="tab:orange", label="emcee MALA")
-    plt.plot(k_values, step_hmc, marker="o", color="tab:green", label="HMC")
-    plt.xlabel("k")
-    plt.ylabel("Per-step runtime (s)")
-    plt.title("Sampler per-step runtime vs rank k")
-    plt.grid(alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(data_dir, "exp1b_emcee_step_time_vs_k.png"), dpi=160)
-    plt.close()
-
-    plt.figure(figsize=(7, 4))
-    plt.plot(k_values, accept_gaussian, marker="o", color="tab:gray", label="emcee RWM")
-    plt.plot(k_values, accept_mala, marker="o", color="tab:orange", label="emcee MALA")
-    plt.plot(k_values, accept_hmc, marker="o", color="tab:green", label="HMC")
-    plt.xlabel("k")
-    plt.ylabel("Acceptance rate")
-    plt.title("Sampler acceptance rate vs rank k")
-    plt.grid(alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(data_dir, "exp1b_emcee_accept_rate_vs_k.png"), dpi=160)
+    plt.savefig(data_dir / f"exp1b_emcee_diagnostics_vs_k{output_suffix}.png", dpi=160)
     plt.close()
 
     if (
-        "RWM" in trace_example
-        and "MALA" in trace_example
-        and "HMC" in trace_example
-    ):
-        plt.figure(figsize=(7, 4))
-        plt.plot(trace_example["RWM"], color="tab:gray", label="emcee RWM")
-        plt.plot(trace_example["MALA"], color="tab:orange", label="emcee MALA")
-        plt.plot(trace_example["HMC"], color="tab:green", label="HMC")
-        plt.xlabel("Iteration")
-        plt.ylabel("Log posterior")
-        plt.title("Sampler log posterior trace at k=50")
-        plt.grid(alpha=0.3)
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(os.path.join(data_dir, "exp1b_emcee_trace_k50.png"), dpi=160)
-        plt.close()
-
-    if (
-        "RWM" in posterior_k200
-        and "MALA" in posterior_k200
-        and "HMC" in posterior_k200
+        X_2d is not None
+        and X_2d.shape[0] == y.shape[0]
+        and "RWM" in posterior_largest_k
+        and "MALA" in posterior_largest_k
+        and "HMC" in posterior_largest_k
+        and largest_posterior_k is not None
     ):
         fig = plt.figure(figsize=(14, 8))
         gs = fig.add_gridspec(2, 4, width_ratios=[1, 1, 1, 0.06])
@@ -594,9 +746,9 @@ def main() -> None:
         label_mappable = None
         for col, (method_key, title) in enumerate(zip(method_keys, method_titles)):
             posterior_mappable = axes[0, col].scatter(
-                X[:, 0],
-                X[:, 1],
-                c=posterior_k200[method_key],
+                X_2d[:, 0],
+                X_2d[:, 1],
+                c=posterior_largest_k[method_key],
                 cmap="viridis",
                 vmin=0.0,
                 vmax=1.0,
@@ -607,8 +759,8 @@ def main() -> None:
             axes[0, col].grid(alpha=0.25)
 
             label_mappable = axes[1, col].scatter(
-                X[:, 0],
-                X[:, 1],
+                X_2d[:, 0],
+                X_2d[:, 1],
                 c=y,
                 cmap="coolwarm",
                 vmin=0,
@@ -620,42 +772,47 @@ def main() -> None:
             axes[1, col].grid(alpha=0.25)
 
         for row in range(2):
-            axes[row, 0].set_ylabel("x2")
+            axes[row, 0].set_ylabel("PC2")
         for col in range(3):
-            axes[1, col].set_xlabel("x1")
+            axes[1, col].set_xlabel("PC1")
 
         cbar_top = fig.colorbar(posterior_mappable, cax=cax_top)
         cbar_top.set_label("Posterior mean probability")
         cbar_bottom = fig.colorbar(label_mappable, cax=cax_bottom, ticks=[0, 1])
         cbar_bottom.set_label("Observed class label")
 
-        fig.suptitle("Posterior and data points by sampler at k=200", fontsize=12)
+        fig.suptitle(
+            f"Posterior and data points by sampler at k={largest_posterior_k} (PCA projection)",
+            fontsize=12,
+        )
         plt.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])
         plt.savefig(
-            os.path.join(data_dir, "exp1b_emcee_posterior_and_data_k200.png"),
+            data_dir / f"exp1b_emcee_posterior_and_data_k{largest_posterior_k}{output_suffix}.png",
             dpi=170,
         )
         plt.close()
+        posterior_plot_saved = True
+    elif args.embeddings is not None and X_2d is not None and X_2d.shape[0] != y.shape[0]:
+        print("WARNING: embeddings row count does not match labels; skipping scatter plot.")
 
     np.save(
-        os.path.join(data_dir, "exp1b_emcee_results.npy"),
+        data_dir / f"exp1b_emcee_results{output_suffix}.npy",
         {
             "results": results,
             "n_samples": n_samples,
             "n_warmup": n_warmup,
             "k_values": k_values,
+            "likelihood": likelihood,
         },
         allow_pickle=True,
     )
 
-    print("Saved:")
-    print("- data/exp1b_emcee_ess_per_sec_vs_k.png")
-    print("- data/exp1b_emcee_tau_vs_k.png")
-    print("- data/exp1b_emcee_step_time_vs_k.png")
-    print("- data/exp1b_emcee_accept_rate_vs_k.png")
-    print("- data/exp1b_emcee_trace_k50.png")
-    print("- data/exp1b_emcee_posterior_and_data_k200.png")
-    print("- data/exp1b_emcee_results.npy")
+    print(f"Saved outputs to {data_dir.resolve()}")
+    print(f"- exp1b_emcee_ess_per_sec_vs_k{output_suffix}.png")
+    print(f"- exp1b_emcee_diagnostics_vs_k{output_suffix}.png")
+    if posterior_plot_saved and largest_posterior_k is not None:
+        print(f"- exp1b_emcee_posterior_and_data_k{largest_posterior_k}{output_suffix}.png")
+    print(f"- exp1b_emcee_results{output_suffix}.npy")
 
 
 if __name__ == "__main__":

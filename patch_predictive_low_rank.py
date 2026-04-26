@@ -1,6 +1,6 @@
 from pathlib import Path
 
-path = Path('experiments/predictative_low_rank.py')
+path = Path('experiments/predictive_low_rank.py')
 text = path.read_text()
 old = '''    print(f"HMC acceptance rate: {hmc_stats[\"accept_rate\"]:.3f}")
 

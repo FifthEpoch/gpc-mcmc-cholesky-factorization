@@ -15,6 +15,7 @@ import os
 import sys
 import time
 
+import emcee
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.linalg import cho_solve, cholesky
@@ -24,11 +25,35 @@ from scipy.special import expit
 # Allow direct script execution without package install.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_PATH = os.path.join(PROJECT_ROOT, "src")
-
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from my_cholesky.kernels import GaussianKernel_mtx
+from predictive_metrics import (
+    evaluate_binary_probabilistic_predictions,
+    print_metric_table,
+    summarize_predictive_distribution,
+)
+
+
+def compute_tau_emcee(chain):
+    """Estimate integrated autocorrelation time with emcee's implementation."""
+    chain = np.asarray(chain, dtype=float)
+    print(f"  compute_tau_emcee received chain shape: {chain.shape}")
+    
+    try:
+        tau = emcee.autocorr.integrated_time(chain, quiet=True)
+        print(f"    tau result (raw): {tau}")
+    except Exception as err:
+        print(f"WARNING: emcee autocorr.integrated_time failed: {err}")
+        return float("nan")
+
+    tau = np.asarray(tau, dtype=float).reshape(-1)
+    if tau.size == 0:
+        return float("nan")
+    return float(np.nanmean(tau))
 
 
 def make_fake_blobs(seed=42, n_per_class=100):
@@ -120,6 +145,7 @@ def run_hmc(
     logp = log_posterior(nu, factor, y)
 
     nu_samples = np.zeros((n_samples, dim), dtype=float)
+    logp_trace = np.zeros((n_samples,), dtype=float)
     post_idx = 0
 
     n_accept = 0
@@ -157,6 +183,13 @@ def run_hmc(
 
         accept_log_prob = current_h - proposal_h
 
+        # Debug first few iterations
+        if i < 5:
+            grad_norm = np.linalg.norm(grad)
+            proposal_distance = np.linalg.norm(proposal_nu - current_nu)
+            print(f"iter {i}: grad_norm={grad_norm:.4f}, proposal_dist={proposal_distance:.6f}, "
+                  f"accept_prob={np.exp(min(0, accept_log_prob)):.6f}")
+
         if np.log(rng.random()) < accept_log_prob:
             nu = proposal_nu
             logp = proposal_logp
@@ -164,12 +197,14 @@ def run_hmc(
 
         if i >= n_warmup:
             nu_samples[post_idx, :] = nu
+            logp_trace[post_idx] = logp
             post_idx += 1
 
     accept_rate = n_accept / total_steps
 
     return {
         "nu_samples": nu_samples,
+        "logp_trace": logp_trace,
         "step_size": float(step_size),
         "n_leapfrog": int(n_leapfrog),
         "accept_rate": float(accept_rate),
@@ -236,6 +271,7 @@ def sample_predictive_probabilities(
     mean_test = K_test_train @ K_inv_f
 
     p_samples = []
+    latent_samples = []
 
     for j in range(n_draws):
         m_j = mean_test[:, j]
@@ -248,9 +284,10 @@ def sample_predictive_probabilities(
             # so Cov(f_*) = L_S L_S^T = S.
             f_star = m_j + cond_chol @ z
 
+            latent_samples.append(f_star)
             p_samples.append(expit(f_star))
 
-    return np.asarray(p_samples)
+    return np.asarray(p_samples), np.asarray(latent_samples)
 
 
 def main():
@@ -260,15 +297,19 @@ def main():
     os.makedirs(data_dir, exist_ok=True)
 
     # Training data
-    X_train, y_train = make_fake_blobs(seed=42, n_per_class=100)
+    X_train, y_train = make_fake_blobs(seed=42, n_per_class=1000)
     n_train = X_train.shape[0]
 
-    # Test grid
+    # Labeled test set for evaluation
+    X_test_labeled, y_test = make_fake_blobs(seed=123, n_per_class=500)
+    n_test_labeled = X_test_labeled.shape[0]
+
+    # Plotting grid for posteriors
     x1 = np.linspace(-3, 3, 20)
     x2 = np.linspace(-3, 3, 20)
     X1, X2 = np.meshgrid(x1, x2)
-    X_test = np.column_stack([X1.ravel(), X2.ravel()])
-    n_test = X_test.shape[0]
+    X_test_plot = np.column_stack([X1.ravel(), X2.ravel()])
+    n_test_plot = X_test_plot.shape[0]
 
     # Kernel matrices
     bandwidth = 1.0
@@ -278,15 +319,25 @@ def main():
         + 1e-6 * np.eye(n_train)
     )
 
-    K_test_train = GaussianKernel_mtx(
-        X_test,
+    K_test_train_plot = GaussianKernel_mtx(
+        X_test_plot,
         X_train,
         bandwidth=bandwidth,
     )
+    K_test_test_plot = GaussianKernel_mtx(
+        X_test_plot,
+        X_test_plot,
+        bandwidth=bandwidth,
+    )
 
-    K_test_test = GaussianKernel_mtx(
-        X_test,
-        X_test,
+    K_test_train_eval = GaussianKernel_mtx(
+        X_test_labeled,
+        X_train,
+        bandwidth=bandwidth,
+    )
+    K_test_test_eval = GaussianKernel_mtx(
+        X_test_labeled,
+        X_test_labeled,
         bandwidth=bandwidth,
     )
 
@@ -294,10 +345,17 @@ def main():
     L_dense = np.linalg.cholesky(K_train)
 
     # HMC parameters
-    n_samples = 200
-    n_warmup = 200
-    hmc_step = 0.08 / np.sqrt(n_train)
+    n_samples = 4000
+    n_warmup = 400
+    hmc_step = 4 / np.sqrt(n_train)
     n_leapfrog = 12
+
+    print(f"HMC setup:")
+    print(f"  n_train: {n_train}")
+    print(f"  step_size: {hmc_step:.6f}")
+    print(f"  n_leapfrog: {n_leapfrog}")
+    print(f"  n_samples: {n_samples}")
+    print(f"  n_warmup: {n_warmup}")
 
     hmc_stats = run_hmc(
         L_dense,
@@ -311,25 +369,84 @@ def main():
 
     print(f"HMC acceptance rate: {hmc_stats['accept_rate']:.3f}")
 
+    # Diagnostics on chain
+    print(f"\nChain sizes:")
+    print(f"  nu_samples shape: {hmc_stats['nu_samples'].shape}")
+    print(f"  logp_trace shape: {hmc_stats['logp_trace'].shape}")
+    print(f"  logp_trace min/max: {np.min(hmc_stats['logp_trace']):.4f} / {np.max(hmc_stats['logp_trace']):.4f}")
+    print(f"  logp_trace std: {np.std(hmc_stats['logp_trace']):.4f}")
+
+    # Check if chain is moving
+    nu_samples = hmc_stats['nu_samples']
+    mean_step = np.mean(np.linalg.norm(np.diff(nu_samples, axis=0), axis=1))
+    std_nu = np.std(nu_samples, axis=0).mean()
+    print(f"\nChain movement diagnostics:")
+    print(f"  Mean step size between consecutive samples: {mean_step:.6f}")
+    print(f"  Mean std of nu chain: {std_nu:.6f}")
+    print(f"  nu_samples min/max: {np.min(nu_samples):.4f} / {np.max(nu_samples):.4f}")
+    print(f"  nu_samples std (overall): {np.std(nu_samples):.4f}")
+
+    tau_nu = compute_tau_emcee(hmc_stats["nu_samples"])
+    tau_logp = compute_tau_emcee(hmc_stats["logp_trace"])
+    print(f"HMC tau (nu mean): {tau_nu:.2f}")
+    print(f"HMC tau (logp): {tau_logp:.2f}")
+
     # Convert nu samples to latent training samples f samples.
     nu_samples = hmc_stats["nu_samples"]
     f_train_samples = L_dense @ nu_samples.T
 
-    # Sample predictive probabilities
-    p_test_samples = sample_predictive_probabilities(
+    # Sample predictive probabilities for the labeled test set.
+    p_test_samples, latent_test_samples = sample_predictive_probabilities(
         K_train,
-        K_test_train,
-        K_test_test,
+        K_test_train_eval,
+        K_test_test_eval,
         f_train_samples,
         n_conditional_draws=10,
         seed=999,
     )
 
-    predictive_prob = np.mean(p_test_samples, axis=0)
-    predictive_std = np.std(p_test_samples, axis=0)
+    pred_summary = summarize_predictive_distribution(
+        p_samples=p_test_samples,
+        latent_samples=latent_test_samples,
+    )
 
-    prob_grid = predictive_prob.reshape(X1.shape)
-    std_grid = predictive_std.reshape(X1.shape)
+    predictive_prob = pred_summary["prob_mean"]
+    predictive_var = pred_summary["prob_variance"]
+    predictive_std = pred_summary["prob_std"]
+
+    predictive_latent_mean = pred_summary["latent_mean"]
+    predictive_latent_var = pred_summary["latent_variance"]
+    predictive_latent_std = pred_summary["latent_std"]
+
+    prob_q05 = pred_summary["prob_q05"]
+    prob_q50 = pred_summary["prob_q50"]
+    prob_q95 = pred_summary["prob_q95"]
+
+    latent_q05 = pred_summary["latent_q05"]
+    latent_q50 = pred_summary["latent_q50"]
+    latent_q95 = pred_summary["latent_q95"]
+
+    test_metrics = evaluate_binary_probabilistic_predictions(
+        y_true=y_test,
+        p_pred=predictive_prob,
+        threshold=0.5,
+        n_bins=15,
+    )
+    print_metric_table(test_metrics, title="HMC GP test metrics")
+
+    # Sample predictive probabilities for plotting on the grid.
+    p_plot_samples, _ = sample_predictive_probabilities(
+        K_train,
+        K_test_train_plot,
+        K_test_test_plot,
+        f_train_samples,
+        n_conditional_draws=10,
+        seed=999,
+    )
+    predictive_prob_plot = np.mean(p_plot_samples, axis=0)
+    predictive_std_plot = np.std(p_plot_samples, axis=0)
+    prob_grid = predictive_prob_plot.reshape(X1.shape)
+    std_grid = predictive_std_plot.reshape(X1.shape)
 
     # Plot
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
@@ -400,12 +517,27 @@ def main():
 
     np.savez(
         results_path,
-        X_test=X_test,
-        predictive_prob=predictive_prob,
-        predictive_std=predictive_std,
+        X_test_plot=X_test_plot,
+        X_test_labeled=X_test_labeled,
+        y_test=y_test,
+        predictive_prob_plot=predictive_prob_plot,
+        predictive_std_plot=predictive_std_plot,
+        predictive_prob_test=predictive_prob,
+        predictive_std_test=predictive_std,
+        predictive_latent_mean_test=predictive_latent_mean,
+        predictive_latent_var_test=predictive_latent_var,
+        prob_q05=prob_q05,
+        prob_q50=prob_q50,
+        prob_q95=prob_q95,
+        latent_q05=latent_q05,
+        latent_q50=latent_q50,
+        latent_q95=latent_q95,
         X_train=X_train,
         y_train=y_train,
         accept_rate=hmc_stats["accept_rate"],
+        tau_nu=tau_nu,
+        tau_logp=tau_logp,
+        **test_metrics,
     )
 
     print("HMC predictive computation completed.")
