@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
-from time import time
+from time import perf_counter
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -178,9 +178,9 @@ def main() -> None:
     for idx, k in enumerate(ks):
         for method_name, method in methods.items():
             for trial in range(trials):
-                start = time()
+                start = perf_counter()
                 lra = method(k)
-                times[method_name][idx, trial] = time() - start
+                times[method_name][idx, trial] = perf_counter() - start
                 errs[method_name][idx, trial] = (trace_fixed - lra.trace()) / trace_fixed
 
             print(
@@ -221,9 +221,9 @@ def main() -> None:
 
             trial_times = np.zeros(trials)
             for t in range(trials):
-                start = time()
+                start = perf_counter()
                 _ = method()
-                trial_times[t] = time() - start
+                trial_times[t] = perf_counter() - start
 
             times_vs_n[method_name][i] = np.mean(trial_times)
             print(

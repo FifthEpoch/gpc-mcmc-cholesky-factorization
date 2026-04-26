@@ -107,13 +107,18 @@ def run_rwm(
             post_idx += 1
 
     post = slice(n_warmup, total_steps)
+    warmup = slice(0, n_warmup)
+    warmup_time = float(np.sum(step_times[warmup]))
     per_step_time = float(np.mean(step_times[post]))
-    total_mcmc_time = float(np.sum(step_times[post]))
+    sampling_time = float(np.sum(step_times[post]))
     accept_rate = float(np.mean(accepts[post]))
 
     return {
         "per_step_time": per_step_time,
-        "total_mcmc_time": total_mcmc_time,
+        "warmup_time": warmup_time,
+        "sampling_time": sampling_time,
+        "total_mcmc_time": sampling_time,
+        "total_sampler_time": warmup_time + sampling_time,
         "accept_rate": accept_rate,
         "logp_trace": logp_trace,
         "final_step_size": float(step_size),
@@ -204,7 +209,10 @@ def main() -> None:
             "k": int(n),
             "factor_time": float(dense_factor_time),
             "per_step_time": dense_stats["per_step_time"],
+            "warmup_time": dense_stats["warmup_time"],
+            "sampling_time": dense_stats["sampling_time"],
             "total_time": dense_stats["total_mcmc_time"],
+            "total_model_compute_time": float(dense_factor_time) + dense_stats["total_sampler_time"],
             "accept_rate": dense_stats["accept_rate"],
             "approx_error": 0.0,
             "logp_trace": dense_stats["logp_trace"],
@@ -257,7 +265,10 @@ def main() -> None:
                 "k": int(F.shape[1]),
                 "factor_time": float(rp_factor_time),
                 "per_step_time": rp_stats["per_step_time"],
+                "warmup_time": rp_stats["warmup_time"],
+                "sampling_time": rp_stats["sampling_time"],
                 "total_time": rp_stats["total_mcmc_time"],
+                "total_model_compute_time": float(rp_factor_time) + rp_stats["total_sampler_time"],
                 "accept_rate": rp_stats["accept_rate"],
                 "approx_error": approx_err,
                 "logp_trace": rp_stats["logp_trace"],

@@ -228,9 +228,11 @@ def run_experiment(args: argparse.Namespace) -> dict:
 
     ds = args.dataset
 
+    load_start = time()
     train_emb, train_lbl = load_embeddings(emb_dir, ds, "train")
     val_emb, val_lbl = load_embeddings(emb_dir, ds, "val")
     test_emb, test_lbl = load_embeddings(emb_dir, ds, "test")
+    data_loading_time = time() - load_start
 
     input_dim = train_emb.shape[1]
     print(f"Dataset: {ds}")
@@ -284,9 +286,13 @@ def run_experiment(args: argparse.Namespace) -> dict:
     test_probs = predict(model, test_loader, device)
     infer_time = time() - infer_start
 
+    evaluation_start = time()
     metrics = compute_all_metrics(test_lbl, test_probs, threshold=0.5, n_bins=15)
     metrics.update(confusion_counts_rates(test_lbl, test_probs, threshold=0.5))
+    metrics["timing_scope"] = "data_loading, training, test_inference, evaluation_plots"
+    metrics["data_loading_time_sec"] = round(data_loading_time, 3)
     metrics["train_time_sec"] = round(train_time, 3)
+    metrics["fit_or_train_time_sec"] = round(train_time, 3)
     metrics["inference_time_sec"] = round(infer_time, 3)
     metrics["best_val_auroc"] = round(best_val_auroc, 6)
     metrics["n_train"] = int(len(train_lbl))
@@ -351,9 +357,12 @@ def run_experiment(args: argparse.Namespace) -> dict:
 
     experiment_end = datetime.now().astimezone()
     total_runtime = time() - experiment_start_ts
+    evaluation_time = time() - evaluation_start
     metrics["experiment_start_time"] = experiment_start.isoformat(timespec="seconds")
     metrics["experiment_end_time"] = experiment_end.isoformat(timespec="seconds")
+    metrics["evaluation_time_sec"] = round(evaluation_time, 3)
     metrics["total_runtime_sec"] = round(total_runtime, 3)
+    metrics["total_pipeline_time_sec"] = round(total_runtime, 3)
 
     print(f"\nTest metrics ({ds}):")
     for k, v in metrics.items():
