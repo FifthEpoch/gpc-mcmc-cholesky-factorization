@@ -226,15 +226,18 @@ def run_experiment(args: argparse.Namespace) -> dict:
     _load_tabpfn_token_from_file()
     from tabpfn import TabPFNClassifier
 
+    experiment_start = time()
     emb_dir = Path(args.embedding_dir)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ds = args.dataset
 
+    load_start = time()
     train_emb, train_lbl = load_embeddings(emb_dir, ds, "train")
     val_emb, val_lbl = load_embeddings(emb_dir, ds, "val")
     test_emb, test_lbl = load_embeddings(emb_dir, ds, "test")
+    data_loading_time = time() - load_start
 
     print(f"Dataset: {ds}")
     print(f"  train: {train_emb.shape[0]}  val: {val_emb.shape[0]}  test: {test_emb.shape[0]}")
@@ -262,11 +265,16 @@ def run_experiment(args: argparse.Namespace) -> dict:
     infer_time = time() - infer_start
     print(f"Inference time ({len(test_lbl)} samples): {infer_time:.2f}s")
 
+    evaluation_start = time()
     metrics = compute_all_metrics(test_lbl, test_probs, threshold=0.5, n_bins=15)
     metrics.update(confusion_counts_rates(test_lbl, test_probs, threshold=0.5))
+    metrics["timing_scope"] = "data_loading, tabpfn_fit, test_inference, evaluation_plots"
+    metrics["data_loading_time_sec"] = round(data_loading_time, 3)
     metrics["fit_time_sec"] = round(fit_time, 3)
+    metrics["fit_or_train_time_sec"] = round(fit_time, 3)
     metrics["inference_time_sec"] = round(infer_time, 3)
     metrics["n_train"] = int(len(train_lbl))
+    metrics["n_val"] = int(len(val_lbl))
     metrics["n_test"] = int(len(test_lbl))
 
     print(f"\nTest metrics ({ds}):")
@@ -328,6 +336,16 @@ def run_experiment(args: argparse.Namespace) -> dict:
             with open(ph_path, "w") as f:
                 json.dump(per_hospital, f, indent=2)
             print(f"Saved: {ph_path}")
+
+    evaluation_time = time() - evaluation_start
+    total_runtime = time() - experiment_start
+    metrics["evaluation_time_sec"] = round(evaluation_time, 3)
+    metrics["total_runtime_sec"] = round(total_runtime, 3)
+    metrics["total_pipeline_time_sec"] = round(total_runtime, 3)
+
+    with open(results_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Updated timing fields in: {results_path}")
 
     return metrics
 

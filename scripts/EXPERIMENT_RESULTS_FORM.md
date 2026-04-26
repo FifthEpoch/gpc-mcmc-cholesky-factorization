@@ -78,6 +78,34 @@ Outcomes: `elpd`, `auroc`, `auprc`, `accuracy`, `sensitivity_tpr`, `specificity_
 
 ---
 
+## Timing Standard
+
+All time fields should be in **seconds**. Record the narrowest comparable timing field available, and use `total_pipeline_time_sec` only for end-to-end wall time. This prevents comparing, for example, “factorization only” against “full data loading + training + plotting”.
+
+| Field | What to include | What to exclude |
+|---|---|---|
+| `data_loading_time_sec` | Reading datasets/embeddings into memory | Model fitting, prediction |
+| `embedding_time_sec` | Image encoder forward pass and embedding save/load work | Downstream classifier fitting |
+| `factor_time_sec` | Kernel factor construction only: dense Cholesky, RPCholesky, inducing setup if timed separately | MCMC sampling or prediction |
+| `warmup_time_sec` | MCMC warmup/adaptation only | Post-warmup sampling |
+| `sampling_time_sec` | Post-warmup MCMC sampling only | Warmup/adaptation |
+| `per_step_time_sec` | Mean post-warmup MCMC step time | Warmup steps |
+| `total_mcmc_time_sec` | Post-warmup MCMC total time unless explicitly noted | Factorization and data loading |
+| `fit_or_train_time_sec` | Optimizer fit/training or TabPFN fit | Data loading, prediction |
+| `inference_time_sec` | Test-set prediction only | Training/fitting |
+| `evaluation_time_sec` | Metric computation and plot generation, if measured | Training/fitting |
+| `fit_predict_time_sec` | Combined fit + predict only when the library cannot split them | Data loading |
+| `total_pipeline_time_sec` | Full wall clock from script start to result write | Use only for end-to-end comparisons |
+
+For fair plots:
+
+- Compare factorization methods with `factor_time_sec` or `mean_time_sec`.
+- Compare MCMC samplers with `sampling_time_sec`, `per_step_time_sec`, `total_mcmc_time_sec`, and `ess_per_sec`.
+- Compare predictive models with `fit_or_train_time_sec`, `inference_time_sec`, and optionally `total_pipeline_time_sec`.
+- If a script only reports a combined time, put it in `fit_predict_time_sec` and describe the timing scope in `timing_scope`.
+
+---
+
 ## Core Metric Definitions
 
 | Field | Meaning |
@@ -100,6 +128,7 @@ Outcomes: `elpd`, `auroc`, `auprc`, `accuracy`, `sensitivity_tpr`, `specificity_
 - `record_id` is unique.
 - Config fields match actual stdout/JSON/NPY/MAT values, not just intended values.
 - Time columns are in seconds.
+- `timing_scope` is filled whenever a time is combined or not directly comparable.
 - MCMC time fields specify whether they are post-warmup only; current scripts generally report post-warmup MCMC time.
 - Classification counts satisfy `tp + tn + fp + fn = n_test`.
 - `false_negative_rate ~= fn / (tp + fn)`.
