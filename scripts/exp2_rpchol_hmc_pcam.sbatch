@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=08:00:00
 #SBATCH --mem=64G
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:1
 #SBATCH --output=slurm_logs/hmc_rose/%x_%j.out
 #SBATCH --error=slurm_logs/hmc_rose/%x_%j.err
 
