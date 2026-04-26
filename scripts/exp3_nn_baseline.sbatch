@@ -31,9 +31,10 @@ export PYTHONNOUSERSITE=1
 #   EPOCHS        max classifier epochs               (default: 50)
 #   PATIENCE      early-stopping patience             (default: 5)
 #   BATCH_SIZE    embedding batch size                (default: 512)
+#   EMBEDDING_DIR path to embedding root             (default: datasets if HG layout exists)
 #   CONDA_ENV     /path/to/env                       (auto-detected)
 #   PROJECT_ROOT  /path/to/project                   (auto-detected)
-#   SKIP_EMBED    1                                  (skip embedding extraction)
+#   SKIP_EMBED    1                                  (skip embedding extraction; auto-set for HG layout)
 
 NETID="${NETID:-<netid>}"
 if [ "${NETID}" = "<netid>" ]; then
@@ -58,6 +59,25 @@ BATCH_SIZE="${BATCH_SIZE:-512}"
 SCRATCH_BASE="/scratch/${NETID}"
 PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
+
+if [ -z "${EMBEDDING_DIR:-}" ]; then
+  if [ -d "${PROJECT_ROOT}/datasets/pcam-hg/train/embeddings" ] || [ -d "${PROJECT_ROOT}/datasets/camelyon17-hg/train/embeddings" ]; then
+    EMBEDDING_DIR="datasets"
+  else
+    EMBEDDING_DIR="data/embeddings"
+  fi
+fi
+
+if [ -z "${SKIP_EMBED:-}" ]; then
+  case "${EMBEDDING_DIR}" in
+    datasets|*pcam-hg|*camelyon17-hg|*embed)
+      SKIP_EMBED=1
+      ;;
+    *)
+      SKIP_EMBED=0
+      ;;
+  esac
+fi
 
 # =============================================================================
 # Load scratch environment (caches, tmp dirs, etc.)
@@ -132,6 +152,8 @@ echo "Model arch   : ${MODEL_ARCH}"
 echo "Hidden dim   : ${HIDDEN_DIM}"
 echo "Layers       : ${NUM_LAYERS}"
 echo "Dropout      : ${DROPOUT}"
+echo "Embed dir    : ${EMBEDDING_DIR}"
+echo "Skip embed   : ${SKIP_EMBED}"
 echo "=============================================================================="
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
@@ -151,6 +173,7 @@ if [ "${SKIP_EMBED}" != "1" ]; then
 else
   echo ""
   echo "[Step 1] Skipped (SKIP_EMBED=1). Using existing embeddings in ${EMBEDDING_DIR}"
+  echo "         exp3_nn_baseline.py will prefer projected_512.npy when it exists."
 fi
 
 # --- Step 2: Train NN head + evaluate -----------------------------------------
