@@ -66,7 +66,7 @@ Outcomes: `elpd`, `ess_logp`, `ess_per_sec`, `tau`, `accept_rate`, `per_step_tim
 
 ### Exp3: Deterministic Baselines
 
-Record: `dataset`, `model_architecture`, `encoder`, `embedding_source`, `embedding_root`, `embedding_variant`, `feature_dim`, `skip_embed`, `epochs`, `patience`, `batch_size`, `lr`, `weight_decay`, `hidden_dim`, `dropout`, `base_channels`, `image_size`, `num_workers`, `max_train_samples`, `max_valid_samples`, `max_test_samples`, `seed`.
+Record: `dataset`, `model_architecture`, `encoder`, `embedding_source`, `embedding_root`, `embedding_variant`, `feature_dim`, `skip_embed`, `epochs`, `patience`, `batch_size`, `lr`, `weight_decay`, `hidden_dim`, `num_layers`, `dropout`, `trainable_parameters`, `base_channels`, `image_size`, `num_workers`, `max_train_samples`, `max_valid_samples`, `max_test_samples`, `seed`.
 
 Outcomes: `elpd`, `auroc`, `auprc`, `accuracy`, `precision`, `recall`, `sensitivity_tpr`, `specificity_tnr`, `false_positive_rate`, `false_negative_rate`, `brier`, `ece`, `tp`, `tn`, `fp`, `fn`, `fit_or_train_time_sec`, `inference_time_sec`, `total_pipeline_time_sec`.
 

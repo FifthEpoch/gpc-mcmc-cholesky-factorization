@@ -22,6 +22,15 @@ export PYTHONNOUSERSITE=1
 #   DATASET       pcam | camelyon17 | embed          (default: pcam)
 #   ENCODER       densenet121 | dinov2_vitl14        (default: densenet121)
 #   EMBEDDING_DIR path to embedding root              (default: data/embeddings)
+#   MODEL_ARCH    residual_mlp | mlp                 (default: residual_mlp)
+#   HIDDEN_DIM    classifier hidden width             (default: 512)
+#   NUM_LAYERS    residual blocks for residual_mlp    (default: 3)
+#   DROPOUT       classifier dropout                  (default: 0.3)
+#   LR            AdamW learning rate                 (default: 1e-3)
+#   WEIGHT_DECAY  AdamW weight decay                  (default: 1e-4)
+#   EPOCHS        max classifier epochs               (default: 50)
+#   PATIENCE      early-stopping patience             (default: 5)
+#   BATCH_SIZE    embedding batch size                (default: 512)
 #   CONDA_ENV     /path/to/env                       (auto-detected)
 #   PROJECT_ROOT  /path/to/project                   (auto-detected)
 #   SKIP_EMBED    1                                  (skip embedding extraction)
@@ -36,6 +45,15 @@ DATASET="${DATASET:-pcam}"
 ENCODER="${ENCODER:-densenet121}"
 SKIP_EMBED="${SKIP_EMBED:-0}"
 EMBEDDING_DIR="${EMBEDDING_DIR:-data/embeddings}"
+MODEL_ARCH="${MODEL_ARCH:-residual_mlp}"
+HIDDEN_DIM="${HIDDEN_DIM:-512}"
+NUM_LAYERS="${NUM_LAYERS:-3}"
+DROPOUT="${DROPOUT:-0.3}"
+LR="${LR:-1e-3}"
+WEIGHT_DECAY="${WEIGHT_DECAY:-1e-4}"
+EPOCHS="${EPOCHS:-50}"
+PATIENCE="${PATIENCE:-5}"
+BATCH_SIZE="${BATCH_SIZE:-512}"
 
 SCRATCH_BASE="/scratch/${NETID}"
 PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
@@ -110,6 +128,10 @@ echo "Project root : ${PROJECT_ROOT}"
 echo "Conda env    : ${CONDA_ENV}"
 echo "Dataset      : ${DATASET}"
 echo "Encoder      : ${ENCODER}"
+echo "Model arch   : ${MODEL_ARCH}"
+echo "Hidden dim   : ${HIDDEN_DIM}"
+echo "Layers       : ${NUM_LAYERS}"
+echo "Dropout      : ${DROPOUT}"
 echo "=============================================================================="
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
@@ -131,13 +153,22 @@ else
   echo "[Step 1] Skipped (SKIP_EMBED=1). Using existing embeddings in ${EMBEDDING_DIR}"
 fi
 
-# --- Step 2: Train MLP + evaluate --------------------------------------------
+# --- Step 2: Train NN head + evaluate -----------------------------------------
 echo ""
-echo "[Step 2] Training MLP head and evaluating on ${DATASET}"
+echo "[Step 2] Training ${MODEL_ARCH} head and evaluating on ${DATASET}"
 "${PYTHON}" experiments/exp3_nn_baseline.py \
     --dataset "${DATASET}" \
     --embedding-dir "${EMBEDDING_DIR}" \
     --output-dir data \
+    --model-arch "${MODEL_ARCH}" \
+    --hidden-dim "${HIDDEN_DIM}" \
+    --num-layers "${NUM_LAYERS}" \
+    --dropout "${DROPOUT}" \
+    --lr "${LR}" \
+    --weight-decay "${WEIGHT_DECAY}" \
+    --epochs "${EPOCHS}" \
+    --patience "${PATIENCE}" \
+    --batch-size "${BATCH_SIZE}" \
     --device cuda
 
 echo "=============================================================================="

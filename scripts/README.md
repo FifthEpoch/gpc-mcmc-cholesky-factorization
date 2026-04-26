@@ -59,8 +59,10 @@ sbatch --export=ALL,NETID=ab1234 scripts/exp0_algorithm_verification.sbatch
 
 ### Experiment 3: Deterministic Neural Network Baseline
 
-Two-step GPU job: (1) extract frozen DenseNet-121 embeddings, then (2) train a
-2-layer MLP classifier on the embeddings.
+Two-step GPU job: (1) extract frozen DenseNet-121 or DINOv2 embeddings, then
+(2) train a neural network classifier head on the embeddings. The default head
+is now `residual_mlp`, a stronger residual MLP with LayerNorm/GELU/dropout; set
+`MODEL_ARCH=mlp` to reproduce the old 2-layer MLP baseline.
 
 ```bash
 sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
@@ -74,6 +76,15 @@ sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
 | `ENCODER`      | `densenet121`  | `densenet121` or `dinov2_vitl14`                 |
 | `SKIP_EMBED`   | `0`            | Set to `1` to skip embedding extraction          |
 | `EMBEDDING_DIR`| `data/embeddings` | Embedding root (project format or partner HG layout) |
+| `MODEL_ARCH`   | `residual_mlp` | `residual_mlp` or `mlp`                          |
+| `HIDDEN_DIM`   | `512`          | Classifier hidden width                          |
+| `NUM_LAYERS`   | `3`            | Residual blocks for `residual_mlp`               |
+| `DROPOUT`      | `0.3`          | Classifier dropout                               |
+| `LR`           | `1e-3`         | AdamW learning rate                              |
+| `WEIGHT_DECAY` | `1e-4`         | AdamW weight decay                               |
+| `EPOCHS`       | `50`           | Max classifier epochs                            |
+| `PATIENCE`     | `5`            | Early-stopping patience on validation AUROC      |
+| `BATCH_SIZE`   | `512`          | Embedding batch size                             |
 | `CONDA_ENV`    | auto-detected  | Override conda env path                          |
 | `PROJECT_ROOT` | auto-detected  | Override project directory                       |
 
@@ -90,6 +101,11 @@ sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=camelyon17,E
 
 # Reuse existing embeddings (skip extraction step)
 sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam,SKIP_EMBED=1 \
+       scripts/exp3_nn_baseline.sbatch
+
+# Reproduce the old 2-layer MLP baseline
+sbatch --account=torch_pr_xxx_yyy \
+       --export=ALL,NETID=ab1234,DATASET=pcam,SKIP_EMBED=1,MODEL_ARCH=mlp,HIDDEN_DIM=256 \
        scripts/exp3_nn_baseline.sbatch
 
 # Use partner embeddings (HG layout) for Exp3; skip extraction
