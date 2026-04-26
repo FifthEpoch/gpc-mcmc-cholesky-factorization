@@ -53,7 +53,7 @@ HG_DATASET_ROOTS = {
 class MLPClassifier(nn.Module):
     """2-layer MLP head for binary classification on frozen embeddings."""
 
-    def __init__(self, input_dim: int = 1024, hidden_dim: int = 256, dropout: float = 0.3):
+    def __init__(self, input_dim: int = 512, hidden_dim: int = 256, dropout: float = 0.3):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -64,6 +64,17 @@ class MLPClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x).squeeze(-1)
+
+
+class LinearClassifier(nn.Module):
+    """Linear probe for binary classification on frozen embeddings."""
+
+    def __init__(self, input_dim: int = 512):
+        super().__init__()
+        self.linear = nn.Linear(input_dim, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear(x).squeeze(-1)
 
 
 class ResidualMLPBlock(nn.Module):
@@ -89,7 +100,7 @@ class ResidualMLPClassifier(nn.Module):
 
     def __init__(
         self,
-        input_dim: int = 1024,
+        input_dim: int = 512,
         hidden_dim: int = 512,
         num_layers: int = 3,
         dropout: float = 0.3,
@@ -118,6 +129,8 @@ class ResidualMLPClassifier(nn.Module):
 
 
 def build_model(args: argparse.Namespace, input_dim: int) -> nn.Module:
+    if args.model_arch == "linear":
+        return LinearClassifier(input_dim=input_dim)
     if args.model_arch == "mlp":
         return MLPClassifier(input_dim=input_dim, hidden_dim=args.hidden_dim, dropout=args.dropout)
     if args.model_arch == "residual_mlp":
@@ -308,7 +321,9 @@ def run_experiment(args: argparse.Namespace) -> dict:
     print(f"  train: {train_emb.shape[0]}  val: {val_emb.shape[0]}  test: {test_emb.shape[0]}")
     print(f"  feature dim: {input_dim}")
     print(f"  model arch: {args.model_arch}")
-    if args.model_arch == "residual_mlp":
+    if args.model_arch == "linear":
+        print("  linear probe: no hidden layers")
+    elif args.model_arch == "residual_mlp":
         print(f"  hidden dim: {args.hidden_dim}  residual layers: {args.num_layers}  dropout: {args.dropout}")
     else:
         print(f"  hidden dim: {args.hidden_dim}  dropout: {args.dropout}")
@@ -376,9 +391,9 @@ def run_experiment(args: argparse.Namespace) -> dict:
     metrics["inference_time_sec"] = round(infer_time, 3)
     metrics["best_val_auroc"] = round(best_val_auroc, 6)
     metrics["model_architecture"] = args.model_arch
-    metrics["hidden_dim"] = int(args.hidden_dim)
+    metrics["hidden_dim"] = int(args.hidden_dim if args.model_arch != "linear" else 0)
     metrics["num_layers"] = int(args.num_layers if args.model_arch == "residual_mlp" else 0)
-    metrics["dropout"] = float(args.dropout)
+    metrics["dropout"] = float(args.dropout if args.model_arch != "linear" else 0.0)
     metrics["learning_rate"] = float(args.lr)
     metrics["weight_decay"] = float(args.weight_decay)
     metrics["batch_size"] = int(args.batch_size)
@@ -472,7 +487,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", type=str, required=True, choices=["pcam", "camelyon17", "embed"])
     parser.add_argument("--embedding-dir", type=str, default="data/embeddings")
     parser.add_argument("--output-dir", type=str, default="data")
-    parser.add_argument("--model-arch", type=str, default="residual_mlp", choices=["mlp", "residual_mlp"])
+    parser.add_argument("--model-arch", type=str, default="residual_mlp", choices=["linear", "mlp", "residual_mlp"])
     parser.add_argument("--hidden-dim", type=int, default=512)
     parser.add_argument("--num-layers", type=int, default=3)
     parser.add_argument("--dropout", type=float, default=0.3)

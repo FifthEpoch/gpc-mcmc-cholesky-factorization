@@ -22,7 +22,7 @@ export PYTHONNOUSERSITE=1
 #   DATASET       pcam | camelyon17 | embed          (default: pcam)
 #   ENCODER       densenet121 | dinov2_vitl14        (default: densenet121)
 #   EMBEDDING_DIR path to embedding root              (default: data/embeddings)
-#   MODEL_ARCH    residual_mlp | mlp                 (default: residual_mlp)
+#   MODEL_ARCH    residual_mlp | mlp | linear        (default: residual_mlp)
 #   HIDDEN_DIM    classifier hidden width             (default: 512)
 #   NUM_LAYERS    residual blocks for residual_mlp    (default: 3)
 #   DROPOUT       classifier dropout                  (default: 0.3)

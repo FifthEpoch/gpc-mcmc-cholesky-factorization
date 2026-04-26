@@ -61,8 +61,10 @@ sbatch --export=ALL,NETID=ab1234 scripts/exp0_algorithm_verification.sbatch
 
 Two-step GPU job: (1) extract frozen DenseNet-121 or DINOv2 embeddings, then
 (2) train a neural network classifier head on the embeddings. The default head
-is now `residual_mlp`, a stronger residual MLP with LayerNorm/GELU/dropout; set
-`MODEL_ARCH=mlp` to reproduce the old 2-layer MLP baseline.
+is now `residual_mlp`, a stronger residual MLP with LayerNorm/GELU/dropout. Set
+`MODEL_ARCH=mlp` to reproduce the old 2-layer MLP baseline, or
+`MODEL_ARCH=linear` for the linear-probe protocol commonly used with frozen
+pathology foundation-model embeddings.
 
 ```bash
 sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
@@ -76,7 +78,7 @@ sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
 | `ENCODER`      | `densenet121`  | `densenet121` or `dinov2_vitl14`                 |
 | `SKIP_EMBED`   | `0`            | Set to `1` to skip embedding extraction          |
 | `EMBEDDING_DIR`| `data/embeddings` | Embedding root (project format or partner HG layout) |
-| `MODEL_ARCH`   | `residual_mlp` | `residual_mlp` or `mlp`                          |
+| `MODEL_ARCH`   | `residual_mlp` | `residual_mlp`, `mlp`, or `linear`               |
 | `HIDDEN_DIM`   | `512`          | Classifier hidden width                          |
 | `NUM_LAYERS`   | `3`            | Residual blocks for `residual_mlp`               |
 | `DROPOUT`      | `0.3`          | Classifier dropout                               |
@@ -106,6 +108,11 @@ sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam,SKIP_EM
 # Reproduce the old 2-layer MLP baseline
 sbatch --account=torch_pr_xxx_yyy \
        --export=ALL,NETID=ab1234,DATASET=pcam,SKIP_EMBED=1,MODEL_ARCH=mlp,HIDDEN_DIM=256 \
+       scripts/exp3_nn_baseline.sbatch
+
+# Run a linear probe on frozen embeddings
+sbatch --account=torch_pr_xxx_yyy \
+       --export=ALL,NETID=ab1234,DATASET=pcam,SKIP_EMBED=1,MODEL_ARCH=linear \
        scripts/exp3_nn_baseline.sbatch
 
 # Use partner embeddings (HG layout) for Exp3; skip extraction
