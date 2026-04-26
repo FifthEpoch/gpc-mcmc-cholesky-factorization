@@ -120,6 +120,8 @@ sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
 | `DATASET`            | `pcam`         | `pcam`, `camelyon17`, or `embed`                  |
 | `MAX_TRAIN_SAMPLES`  | `50000`        | Subsample training set to this size for TabPFN    |
 | `EMBEDDING_DIR`      | `data/embeddings` | Embedding root (project format or partner HG layout) |
+| `TABPFN_TOKEN`       | unset          | Prior Labs API token for headless cluster auth    |
+| `TABPFN_TOKEN_FILE`  | unset          | Path to file containing token; safer than inline token |
 | `CONDA_ENV`          | auto-detected  | Override conda env path                           |
 | `PROJECT_ROOT`       | auto-detected  | Override project directory                        |
 
@@ -137,6 +139,13 @@ sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=camelyon17,M
 # Use partner embeddings (HG layout) for Exp4
 sbatch --account=torch_pr_xxx_yyy \
        --export=ALL,NETID=ab1234,DATASET=camelyon17,EMBEDDING_DIR=/scratch/sd6701/gpc-mcmc-cholesky-factorization/datasets \
+       scripts/exp4_tabpfn_baseline.sbatch
+
+# Headless TabPFN auth using a token file
+printf '%s\n' '<your-prior-labs-token>' > /scratch/ab1234/tabpfn_token.txt
+chmod 600 /scratch/ab1234/tabpfn_token.txt
+sbatch --account=torch_pr_xxx_yyy \
+       --export=ALL,NETID=ab1234,DATASET=pcam,TABPFN_TOKEN_FILE=/scratch/ab1234/tabpfn_token.txt \
        scripts/exp4_tabpfn_baseline.sbatch
 ```
 

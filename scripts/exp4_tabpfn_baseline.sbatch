@@ -22,6 +22,8 @@ export PYTHONNOUSERSITE=1
 #   DATASET              pcam | camelyon17 | embed     (default: pcam)
 #   MAX_TRAIN_SAMPLES    int                           (default: 50000)
 #   EMBEDDING_DIR        path to embedding root         (default: data/embeddings)
+#   TABPFN_TOKEN         Prior Labs API token           (optional)
+#   TABPFN_TOKEN_FILE    file containing token          (optional, safer)
 #   CONDA_ENV            /path/to/env                  (auto-detected)
 #   PROJECT_ROOT         /path/to/project              (auto-detected)
 
@@ -34,6 +36,7 @@ fi
 DATASET="${DATASET:-pcam}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-50000}"
 EMBEDDING_DIR="${EMBEDDING_DIR:-data/embeddings}"
+TABPFN_TOKEN_FILE="${TABPFN_TOKEN_FILE:-}"
 
 SCRATCH_BASE="/scratch/${NETID}"
 PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
@@ -75,6 +78,28 @@ export PATH="${CONDA_PREFIX}/bin:${PATH}"
 unset PYTHONHOME
 unset PYTHONPATH
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
+
+# =============================================================================
+# TabPFN authentication for headless cluster jobs
+# =============================================================================
+# Prefer TABPFN_TOKEN_FILE so the token does not appear in shell history or Slurm
+# accounting output. If TABPFN_TOKEN is already exported, this block preserves it.
+if [ -n "${TABPFN_TOKEN_FILE}" ]; then
+  if [ ! -r "${TABPFN_TOKEN_FILE}" ]; then
+    echo "ERROR: TABPFN_TOKEN_FILE is not readable: ${TABPFN_TOKEN_FILE}" >&2
+    exit 1
+  fi
+  export TABPFN_TOKEN="$(tr -d '\r\n' < "${TABPFN_TOKEN_FILE}")"
+fi
+
+if [ -n "${TABPFN_TOKEN:-}" ]; then
+  echo "TabPFN token provided via environment."
+else
+  echo "WARN: TABPFN_TOKEN is not set. TabPFN may fail if model license authentication is required." >&2
+fi
+
+# Avoid browser-login attempts on compute nodes.
+export TABPFN_NO_BROWSER="${TABPFN_NO_BROWSER:-1}"
 
 PYTHON="${CONDA_PREFIX}/bin/python"
 if [ ! -x "${PYTHON}" ]; then
