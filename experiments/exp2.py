@@ -82,6 +82,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-samples", type=int, default=2000)
     parser.add_argument("--n-warmup", type=int, default=200)
     parser.add_argument("--n-leapfrog", type=int, default=12)
+    parser.add_argument(
+        "--prediction-batch-size",
+        type=int,
+        default=512,
+        help="Number of posterior samples to process per batched predictive solve.",
+    )
     parser.add_argument("--hmc-step-constant", type=float, default=0.05)
     parser.add_argument("--hmc-target-accept", type=float, default=0.8)
     parser.add_argument(
@@ -107,6 +113,10 @@ def log_posterior(nu, factor, y):
     """
     f = factor @ nu
     p = expit(f)
+    return log_posterior_from_cached_forward(nu, p, y)
+
+
+def log_posterior_from_cached_forward(nu, p, y):
     eps = 1e-10
     log_lik = np.sum(y * np.log(p + eps) + (1 - y) * np.log(1 - p + eps))
     log_prior = -0.5 * np.dot(nu, nu)
@@ -114,9 +124,14 @@ def log_posterior(nu, factor, y):
 
 
 def grad_log_posterior(nu, factor, y):
+    grad, _ = grad_log_posterior_with_cache(nu, factor, y)
+    return grad
+
+
+def grad_log_posterior_with_cache(nu, factor, y):
     f = factor @ nu
     p = expit(f)
-    return factor.T @ (y - p) - nu
+    return factor.T @ (y - p) - nu, p
 
 
 def compute_tau_emcee(chain):
@@ -138,8 +153,10 @@ def sample_predictive_probabilities_pivots(
     X_train,
     X_test,
     pivot_indices,
+    K_pp,
     nu_samples,
     bandwidth,
+    batch_size=512,
     seed=0,
 ):
     """
@@ -156,10 +173,7 @@ def sample_predictive_probabilities_pivots(
     X_pivots = X_train[pivot_indices].astype(np.float32, copy=False)
     F_pivots = F[pivot_indices, :].astype(np.float32, copy=False)
 
-    K_pp = GaussianKernel_mtx(X_pivots, X_pivots, bandwidth=bandwidth).astype(
-        np.float64,
-        copy=False,
-    )
+    K_pp = np.asarray(K_pp, dtype=np.float64)
     # Numerical jitter for Cholesky stability. This is NOT a model nugget --
     # the model is K_PP exactly. The jitter only protects the float64 Cholesky
     # from breakdown when K_PP is borderline-singular due to highly correlated pivots.
@@ -189,18 +203,21 @@ def sample_predictive_probabilities_pivots(
     latent_samples = np.zeros((n_samples, n_test), dtype=np.float32)
     p_samples = np.zeros((n_samples, n_test), dtype=np.float32)
 
-    for s in range(n_samples):
-        f_pivots = F_pivots @ nu_samples[s].astype(np.float32, copy=False)
+    batch_size = max(1, int(batch_size))
+    for start in range(0, n_samples, batch_size):
+        end = min(start + batch_size, n_samples)
+        nu_batch = nu_samples[start:end].T
+        f_pivots = F_pivots @ nu_batch
         rhs = f_pivots.astype(np.float64, copy=False)
         alpha = solve_triangular(L_pp, rhs, lower=True, check_finite=False)
         alpha = solve_triangular(L_pp.T, alpha, lower=False, check_finite=False)
         alpha = alpha.astype(np.float32, copy=False)
 
         mean = K_test_pivots @ alpha
-        xi = rng.standard_normal(n_test).astype(np.float32, copy=False)
-        f_star = mean + std * xi
-        latent_samples[s] = f_star
-        p_samples[s] = expit(f_star).astype(np.float32, copy=False)
+        xi = rng.standard_normal(mean.shape).astype(np.float32, copy=False)
+        f_star = mean + std[:, None] * xi
+        latent_samples[start:end] = f_star.T
+        p_samples[start:end] = expit(f_star).T.astype(np.float32, copy=False)
 
     return {
         "p_samples": p_samples,
@@ -221,13 +238,16 @@ def run_hmc(
     adapt_step_size=True,
 ):
     rng = np.random.default_rng(seed)
+    if n_leapfrog < 1:
+        raise ValueError("n_leapfrog must be at least 1")
+
     dim = factor.shape[1]
     total_steps = n_warmup + n_samples
 
-    nu = np.zeros(dim, dtype=np.float32)
+    nu = np.zeros(dim, dtype=np.float64)
     logp = log_posterior(nu, factor, y)
 
-    nu_samples = np.zeros((n_samples, dim), dtype=np.float32)
+    nu_samples = np.zeros((n_samples, dim), dtype=np.float64)
     logp_trace = np.zeros((n_samples,), dtype=np.float64)
     step_times = np.zeros(total_steps, dtype=np.float64)
     accepts = np.zeros(total_steps, dtype=bool)
@@ -250,22 +270,30 @@ def run_hmc(
 
         current_nu = nu.copy()
         current_logp = logp
-        momentum = rng.standard_normal(dim).astype(np.float32, copy=False)
+        momentum = rng.standard_normal(dim)
 
-        grad = grad_log_posterior(current_nu, factor, y)
+        grad, _ = grad_log_posterior_with_cache(current_nu, factor, y)
         proposal_nu = current_nu.copy()
         proposal_p = momentum + 0.5 * step_size * grad
 
         for leapfrog_idx in range(n_leapfrog):
             proposal_nu = proposal_nu + step_size * proposal_p
-            grad = grad_log_posterior(proposal_nu, factor, y)
+            grad, proposal_prob = grad_log_posterior_with_cache(
+                proposal_nu,
+                factor,
+                y,
+            )
             if leapfrog_idx != n_leapfrog - 1:
                 proposal_p = proposal_p + step_size * grad
 
         proposal_p = proposal_p + 0.5 * step_size * grad
         proposal_p = -proposal_p
 
-        proposal_logp = log_posterior(proposal_nu, factor, y)
+        proposal_logp = log_posterior_from_cached_forward(
+            proposal_nu,
+            proposal_prob,
+            y,
+        )
         current_h = -current_logp + 0.5 * np.dot(momentum, momentum)
         proposal_h = -proposal_logp + 0.5 * np.dot(proposal_p, proposal_p)
         log_accept = current_h - proposal_h
@@ -285,7 +313,7 @@ def run_hmc(
 
         step_times[i] = time.perf_counter() - t0
         if i >= n_warmup:
-            nu_samples[post_idx] = nu.astype(np.float32, copy=False)
+            nu_samples[post_idx] = nu
             logp_trace[post_idx] = logp
             post_idx += 1
 
@@ -353,7 +381,7 @@ def main():
     y_train = np.load(factor_dir / "labels.npy").astype(np.float32, copy=False).squeeze()
     X_test = np.load(args.test_embeddings).astype(np.float32, copy=False)
     y_test = np.load(args.test_labels).astype(np.float32, copy=False).squeeze()
-    F = np.load(factor_dir / f"factor_k{args.k}.npy").astype(np.float32, copy=False)
+    F = np.load(factor_dir / f"factor_k{args.k}.npy").astype(np.float64, copy=False)
     pivots_path = factor_dir / f"pivots_k{args.k}.npy"
     if not pivots_path.exists():
         raise FileNotFoundError(
@@ -361,6 +389,13 @@ def main():
             "to regenerate the factor directory with pivot indices included."
         )
     pivot_indices = np.load(pivots_path).astype(np.int64, copy=False)
+    kpp_path = factor_dir / f"kernel_submatrix_k{args.k}.npy"
+    if not kpp_path.exists():
+        raise FileNotFoundError(
+            f"{kpp_path} not found. Re-run exp_rpcholesky_embeddings.py "
+            "to regenerate the factor directory with the pivot kernel submatrix included."
+        )
+    K_pivots = np.load(kpp_path).astype(np.float64, copy=False)
     assert X_train.shape[0] == F.shape[0] == y_train.shape[0], (
         f"Misaligned training arrays: X_train={X_train.shape[0]}, "
         f"F={F.shape[0]}, y_train={y_train.shape[0]}. "
@@ -370,12 +405,14 @@ def main():
         f"Misaligned pivot indices: pivots={pivot_indices.shape[0]}, "
         f"F rank={F.shape[1]}."
     )
+    assert K_pivots.shape == (F.shape[1], F.shape[1]), (
+        f"Misaligned pivot kernel submatrix: K_pivots={K_pivots.shape}, "
+        f"expected {(F.shape[1], F.shape[1])}."
+    )
     F_P_check = F[pivot_indices, :]
-    X_pivots_check = X_train[pivot_indices]
-    K_PP_check = GaussianKernel_mtx(X_pivots_check, X_pivots_check, bandwidth=bandwidth)
     recon = F_P_check @ F_P_check.T
-    abs_err = float(np.max(np.abs(recon - K_PP_check)))
-    rel_err = abs_err / float(np.max(np.abs(K_PP_check)) + 1e-30)
+    abs_err = float(np.max(np.abs(recon - K_pivots)))
+    rel_err = abs_err / float(np.max(np.abs(K_pivots)) + 1e-30)
     print(f"Pivot consistency check: |F_P F_P^T - K_PP| max={abs_err:.2e}, rel={rel_err:.2e}")
     if rel_err > 1e-3:
         print(
@@ -437,8 +474,10 @@ def main():
         X_train=X_train,
         X_test=X_test,
         pivot_indices=pivot_indices,
+        K_pp=K_pivots,
         nu_samples=nu_samples,
         bandwidth=bandwidth,
+        batch_size=args.prediction_batch_size,
         seed=999,
     )
     print(f"Predictive sampling time: {time.perf_counter() - t_pred_start:.2f}s")

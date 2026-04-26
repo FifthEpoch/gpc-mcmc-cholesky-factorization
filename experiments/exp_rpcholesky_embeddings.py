@@ -110,13 +110,18 @@ def run_rank(A: KernelMatrix, k: int, b: int, stoptol: float) -> dict:
         "kernel_queries": int(A.num_queries()),
     }
 
+    saved_query_count = A.num_queries()
+    K_pivots = A[pivots, pivots]
+    K_pivots = 0.5 * (K_pivots + K_pivots.T)
+    A.queries = saved_query_count
+
     print(f"  done in {elapsed:.2f}s  actual rank={k_actual}")
     print(f"  trace(K)={trace_K:.2f}  trace(FF^T)={trace_FFt:.2f}")
     print(f"  relative trace error: {rel_trace_error:.4e}")
     print(f"  kernel entries queried: {stats['kernel_queries']:,}  "
           f"(vs {n*n:,} for full matrix)")
 
-    return {"factor": F, "pivots": pivots, "stats": stats}
+    return {"factor": F, "pivots": pivots, "K_pivots": K_pivots, "stats": stats}
 
 
 def main() -> None:
@@ -139,6 +144,7 @@ def main() -> None:
         result = run_rank(A, k=k, b=args.block_size, stoptol=args.stoptol)
         F = result["factor"]
         pivots = result["pivots"]
+        K_pivots = result["K_pivots"]
         stats = result["stats"]
 
         # Save the factor for this rank
@@ -152,6 +158,11 @@ def main() -> None:
         np.save(pivots_path, pivots.astype(np.int64))
         stats["pivots_path"] = str(pivots_path)
         print(f"  saved pivots: {pivots_path}")
+
+        kpp_path = out_dir / f"kernel_submatrix_k{stats['k_actual']}.npy"
+        np.save(kpp_path, K_pivots.astype(np.float64, copy=False))
+        stats["kernel_submatrix_path"] = str(kpp_path)
+        print(f"  saved kernel submatrix: {kpp_path}  ({K_pivots.shape})")
 
         all_stats.append(stats)
 
