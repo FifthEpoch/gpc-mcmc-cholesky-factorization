@@ -139,9 +139,7 @@ row_count() {
 
 move_outputs() {
   local tmp_dir="$1"
-  local dest_dir="$2"
-  local tag="$3"
-  local k="$4"
+  local target_dir="$2"
 
   local factor_src=("${tmp_dir}"/factor_k*.npy)
   local pivots_src=("${tmp_dir}"/pivots_k*.npy)
@@ -152,14 +150,17 @@ move_outputs() {
     exit 1
   fi
 
-  mv -f "${factor_src[0]}" "${dest_dir}/factor_${tag}_k${k}.npy"
-  mv -f "${pivots_src[0]}" "${dest_dir}/pivots_${tag}_k${k}.npy"
-  mv -f "${kernel_src[0]}" "${dest_dir}/kernel_submatrix_${tag}_k${k}.npy"
-  mv -f "${tmp_dir}/embeddings.npy" "${dest_dir}/embeddings_${tag}_k${k}.npy"
+  rm -rf "${target_dir}"
+  mkdir -p "${target_dir}"
+
+  mv -f "${factor_src[0]}" "${target_dir}/$(basename "${factor_src[0]}")"
+  mv -f "${pivots_src[0]}" "${target_dir}/$(basename "${pivots_src[0]}")"
+  mv -f "${kernel_src[0]}" "${target_dir}/$(basename "${kernel_src[0]}")"
+  mv -f "${tmp_dir}/embeddings.npy" "${target_dir}/embeddings.npy"
   if [ -f "${tmp_dir}/labels.npy" ]; then
-    mv -f "${tmp_dir}/labels.npy" "${dest_dir}/labels_${tag}_k${k}.npy"
+    mv -f "${tmp_dir}/labels.npy" "${target_dir}/labels.npy"
   fi
-  mv -f "${tmp_dir}/summary.json" "${dest_dir}/summary_${tag}_k${k}.json"
+  mv -f "${tmp_dir}/summary.json" "${target_dir}/summary.json"
 }
 
 echo "=============================================================================="
@@ -204,6 +205,7 @@ for split in ${SPLITS}; do
   for requested_size in ${SUBSAMPLE_SIZES}; do
     tag="$(size_tag "${requested_size}")"
     tmp_dir="${TMPDIR:-/tmp}/rpchol_${split}_${tag}_k${K_VALUE}_${SLURM_JOB_ID:-$$}"
+    target_dir="${split_dir}/exp2_rpchol_${tag}"
     rm -rf "${tmp_dir}"
     mkdir -p "${tmp_dir}"
 
@@ -232,16 +234,16 @@ for split in ${SPLITS}; do
     fi
 
     "${cmd[@]}"
-    move_outputs "${tmp_dir}" "${split_dir}" "${tag}" "${K_VALUE}"
+    move_outputs "${tmp_dir}" "${target_dir}"
     rm -rf "${tmp_dir}"
 
     echo "[${split}] saved:"
-    echo "  ${split_dir}/factor_${tag}_k${K_VALUE}.npy"
-    echo "  ${split_dir}/pivots_${tag}_k${K_VALUE}.npy"
-    echo "  ${split_dir}/kernel_submatrix_${tag}_k${K_VALUE}.npy"
-    echo "  ${split_dir}/embeddings_${tag}_k${K_VALUE}.npy"
-    echo "  ${split_dir}/labels_${tag}_k${K_VALUE}.npy"
-    echo "  ${split_dir}/summary_${tag}_k${K_VALUE}.json"
+    echo "  ${target_dir}/factor_k*.npy"
+    echo "  ${target_dir}/pivots_k*.npy"
+    echo "  ${target_dir}/kernel_submatrix_k*.npy"
+    echo "  ${target_dir}/embeddings.npy"
+    echo "  ${target_dir}/labels.npy"
+    echo "  ${target_dir}/summary.json"
   done
 done
 
@@ -249,5 +251,5 @@ echo "==========================================================================
 echo "Done: $(date)"
 echo "Artifacts were written directly into:"
 echo "  ${PROJECT_ROOT}/${DATASET_ROOT}/{train,valid,test}/embeddings/"
-echo "using names like factor_5k_k${K_VALUE}.npy and summary_full_k${K_VALUE}.json"
+echo "using folders like exp2_rpchol_5k/, exp2_rpchol_10k/, ..., exp2_rpchol_full/"
 echo "=============================================================================="
