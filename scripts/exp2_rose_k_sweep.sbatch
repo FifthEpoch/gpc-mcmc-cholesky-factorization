@@ -27,7 +27,7 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
 TRAIN_EMB="datasets/pcam-hg/train/embeddings/projected_512.npy"
-TRAIN_LABELS="datasets/pcam-hg/train/embeddings/y_embedding.npy"
+TRAIN_LABELS="datasets/pcam-hg/train/embeddings/y_embeddings.npy"
 TEST_EMB="datasets/pcam-hg/test/embeddings/projected_512.npy"
 TEST_LABELS="datasets/pcam-hg/test/embeddings/y_embeddings.npy"
 
