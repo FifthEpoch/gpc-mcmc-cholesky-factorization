@@ -141,7 +141,7 @@ sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
 | -------------------- | -------------- | ------------------------------------------------- |
 | `NETID`              | *(required)*   | Your cluster NetID                                |
 | `DATASET`            | `pcam`         | `pcam`, `camelyon17`, or `embed`                  |
-| `MAX_TRAIN_SAMPLES`  | `50000`        | Subsample training set to this size for TabPFN    |
+| `MAX_TRAIN_SAMPLES`  | `3500`         | Subsample training set to this size for TabPFN    |
 | `EMBEDDING_DIR`      | `data/embeddings` | Embedding root (project format or partner HG layout) |
 | `TABPFN_TOKEN`       | unset          | Prior Labs API token for `tabpfn-client` auth     |
 | `TABPFN_TOKEN_FILE`  | unset          | Path to file containing token; safer than inline token |
