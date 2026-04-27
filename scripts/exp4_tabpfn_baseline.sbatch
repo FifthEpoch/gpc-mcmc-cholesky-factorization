@@ -162,6 +162,11 @@ fi
   "${PYTHON}" -m pip install --no-cache-dir python-dotenv
 }
 
+"${PYTHON}" -c "import tabpfn_client; print('tabpfn-client imported OK')" >/dev/null 2>&1 || {
+  echo "Installing missing tabpfn-client into ${CONDA_ENV} ..."
+  "${PYTHON}" -m pip install --no-cache-dir tabpfn-client
+}
+
 hg_dataset_root_name() {
   case "${DATASET}" in
     pcam) echo "pcam-hg" ;;
@@ -189,8 +194,8 @@ if [ ! -f "experiments/exp4_tabpfn_baseline.py" ]; then
   exit 1
 fi
 
-"${PYTHON}" -c "import tabpfn; print('TabPFN imported OK')" || {
-  echo "ERROR: TabPFN import check failed. Install it in ${CONDA_ENV}." >&2
+"${PYTHON}" -c "import tabpfn_client; print('tabpfn-client imported OK')" || {
+  echo "ERROR: tabpfn-client import check failed. Install it in ${CONDA_ENV}." >&2
   exit 1
 }
 
