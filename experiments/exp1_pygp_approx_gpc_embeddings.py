@@ -111,6 +111,25 @@ def fit_method(
     return model, float(elapsed)
 
 
+def _prediction_mean_to_prob(ym: np.ndarray) -> np.ndarray:
+    """
+    Convert pyGPs classification predictive means to P(y=1).
+
+    Some pyGPs classification paths return means on the original {-1, +1}
+    label scale rather than direct probabilities. In that case,
+    E[y] = 2 * P(y=1) - 1, so P(y=1) = (E[y] + 1) / 2.
+    """
+    ym = np.asarray(ym, dtype=float).reshape(-1)
+    finite = ym[np.isfinite(ym)]
+    if finite.size == 0:
+        raise ValueError("pyGPs returned no finite predictive means.")
+
+    if np.min(finite) < 0.0 or np.max(finite) > 1.0:
+        return np.clip((ym + 1.0) / 2.0, 0.0, 1.0)
+
+    return np.clip(ym, 0.0, 1.0)
+
+
 def predict_with_model(model: Any, X_pred: np.ndarray) -> dict[str, Any]:
     """Predict from a fitted pyGPs model."""
     ym, ys2, fm, fs2, lp = model.predict(X_pred)
@@ -121,9 +140,10 @@ def predict_with_model(model: Any, X_pred: np.ndarray) -> dict[str, Any]:
     fs2 = np.asarray(fs2, dtype=float).reshape(-1)
     lp = np.asarray(lp, dtype=float).reshape(-1)
 
-    prob = np.clip(ym, 0.0, 1.0)
+    prob = _prediction_mean_to_prob(ym)
     return {
         "prob": prob,
+        "raw_y_mean": ym,
         "y_var": ys2,
         "latent_mean": fm,
         "latent_var": np.maximum(fs2, 0.0),
@@ -357,6 +377,9 @@ def main() -> None:
         test_metrics["feature_dim"] = int(X_train.shape[1])
         test_metrics["kernel_bandwidth"] = float(args.kernel_bandwidth)
         test_metrics["kernel_signal_std"] = float(args.kernel_signal_std)
+        test_metrics["prob_min"] = float(np.min(pred_test["prob"]))
+        test_metrics["prob_mean"] = float(np.mean(pred_test["prob"]))
+        test_metrics["prob_max"] = float(np.max(pred_test["prob"]))
 
         all_results[method] = {
             "fit_time": fit_time,
