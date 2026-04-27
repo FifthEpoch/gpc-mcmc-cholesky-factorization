@@ -15,6 +15,9 @@ wandb
 transformers
 torch
 torchvision
+gpytorch
+h5py
+tabpfn
 tabpfn-client
 python-dotenv
 datasets

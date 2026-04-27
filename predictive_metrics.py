@@ -56,8 +56,30 @@ def evaluate_binary_probabilistic_predictions(
     specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else np.nan
     fpr = float(fp / (tn + fp)) if (tn + fp) > 0 else np.nan
 
+    # Mean negative log predictive probability
     nll = float(log_loss(y_true, p_pred, labels=[0, 1]))
+
+    # Mean log predictive probability
     log_likelihood = -nll
+
+    # Pointwise log predictive probabilities:
+    #
+    # log p(y_i | x_i, D)
+    # =
+    # y_i log p_i + (1 - y_i) log(1 - p_i)
+    #
+    log_pred_prob_i = (
+        y_true * np.log(p_pred)
+        + (1 - y_true) * np.log(1.0 - p_pred)
+    )
+
+    # ELPD: expected log predictive density over the dataset.
+    # For classification this is the sum of log predictive probabilities.
+    elpd = float(np.sum(log_pred_prob_i))
+
+    # PELL: predictive expected log likelihood per example.
+    # This is the mean log predictive probability.
+    pell = float(np.mean(log_pred_prob_i))
 
     brier = float(brier_score_loss(y_true, p_pred))
     ece = expected_calibration_error(y_true, p_pred, n_bins=n_bins)
@@ -75,6 +97,14 @@ def evaluate_binary_probabilistic_predictions(
     return {
         "log_likelihood_mean": log_likelihood,
         "negative_log_likelihood_mean": nll,
+
+        # New metrics
+        "elpd": elpd,
+        "pell": pell,
+
+        # Optional alias, same as pell
+        "mean_predictive_log_likelihood": pell,
+
         "brier": brier,
         "ece": ece,
         "auroc": auroc,
