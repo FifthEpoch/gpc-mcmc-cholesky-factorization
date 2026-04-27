@@ -28,7 +28,6 @@ import matplotlib
 matplotlib.use("Agg")
 import numpy as np
 
-
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -80,11 +79,30 @@ def fit_method(
     X: np.ndarray,
     y01: np.ndarray,
     method_code: str,
+    kernel_bandwidth: float,
+    kernel_signal_std: float,
 ) -> tuple[Any, float]:
     """Fit one pyGPs classifier and return the model plus fit time."""
+    if kernel_bandwidth <= 0:
+        raise ValueError("--kernel-bandwidth must be positive.")
+    if kernel_signal_std <= 0:
+        raise ValueError("--kernel-signal-std must be positive.")
+
     y_pm1 = _to_pm1_labels(y01)
 
     model = pygp_module.GPC()
+
+    # RBF kernel:
+    #   kernel_bandwidth = lengthscale ell
+    #   kernel_signal_std = signal standard deviation sigma_f
+    #
+    # Smaller bandwidth -> more local/rapid variation.
+    # Larger bandwidth  -> smoother function.
+    model.covfunc = pygp_module.cov.RBF(
+        log_ell=np.log(kernel_bandwidth),
+        log_sigma=np.log(kernel_signal_std),
+    )
+
     _configure_inference(model, pygp_module, method_code)
 
     t0 = time.perf_counter()
@@ -258,6 +276,21 @@ def parse_args() -> argparse.Namespace:
         dest="standardize",
         help="Disable train-set feature standardization.",
     )
+
+    # Kernel parameters.
+    parser.add_argument(
+        "--kernel-bandwidth",
+        type=float,
+        default=1.0,
+        help="RBF kernel bandwidth/lengthscale. Must be positive.",
+    )
+    parser.add_argument(
+        "--kernel-signal-std",
+        type=float,
+        default=1.0,
+        help="RBF kernel signal standard deviation. Must be positive.",
+    )
+
     parser.add_argument("--output-dir", type=str, default="data")
     parser.add_argument("--seed", type=int, default=42)
     parser.set_defaults(standardize=True)
@@ -297,9 +330,21 @@ def main() -> None:
     all_metrics: dict[str, dict[str, Any]] = {}
 
     print("Running pyGPs methods:", ", ".join(methods))
+    print(f"Kernel bandwidth/lengthscale: {args.kernel_bandwidth}")
+    print(f"Kernel signal std: {args.kernel_signal_std}")
+
     for method in methods:
-        fit_model, fit_time = fit_method(pygp, X_train, y_train, method)
+        fit_model, fit_time = fit_method(
+            pygp,
+            X_train,
+            y_train,
+            method,
+            args.kernel_bandwidth,
+            args.kernel_signal_std,
+        )
+
         pred_test = predict_with_model(fit_model, X_test)
+
         test_metrics = evaluate_binary_probabilistic_predictions(
             y_true=y_test,
             p_pred=pred_test["prob"],
@@ -310,6 +355,8 @@ def main() -> None:
         test_metrics["n_train"] = int(X_train.shape[0])
         test_metrics["n_test"] = int(X_test.shape[0])
         test_metrics["feature_dim"] = int(X_train.shape[1])
+        test_metrics["kernel_bandwidth"] = float(args.kernel_bandwidth)
+        test_metrics["kernel_signal_std"] = float(args.kernel_signal_std)
 
         all_results[method] = {
             "fit_time": fit_time,
@@ -334,6 +381,8 @@ def main() -> None:
                 "max_train_samples": args.max_train_samples,
                 "max_test_samples": args.max_test_samples,
                 "standardize": args.standardize,
+                "kernel_bandwidth": args.kernel_bandwidth,
+                "kernel_signal_std": args.kernel_signal_std,
                 "methods": all_metrics,
             },
             f,
@@ -346,6 +395,8 @@ def main() -> None:
             "dataset": args.dataset,
             "train_split": args.train_split,
             "test_split": args.test_split,
+            "kernel_bandwidth": args.kernel_bandwidth,
+            "kernel_signal_std": args.kernel_signal_std,
             "methods": all_results,
             "y_test": y_test,
         },
@@ -355,8 +406,6 @@ def main() -> None:
     print("Saved:")
     print(f"- {metrics_path}")
     print(f"- {results_path}")
-    print("Skipped 2D contour plot because embedding features are not 2-dimensional.")
-
 
 if __name__ == "__main__":
     main()
