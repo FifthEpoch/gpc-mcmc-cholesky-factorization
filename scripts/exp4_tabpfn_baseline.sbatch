@@ -18,8 +18,27 @@ export PYTHONNOUSERSITE=1
 # By default, if datasets/<dataset>-hg exists, use that embedding root and
 # therefore prefer projected_512.npy when available.
 #
-# Example:
-#   sbatch --export=ALL,DATASET=pcam scripts/exp4_tabpfn_baseline.sbatch
+# Optional overrides:
+#   DATASET              pcam | camelyon17 | embed    (default: pcam)
+#   MAX_TRAIN_SAMPLES    int                          (default: 3500)
+#   EMBEDDING_DIR        path to embedding root       (default: HG root when present)
+#   TABPFN_TOKEN         Prior Labs API token         (optional)
+#   TABPFN_TOKEN_FILE    file containing token        (optional, safer)
+#   CONDA_ENV            /path/to/env                 (auto-detected)
+#   PROJECT_ROOT         /path/to/project             (auto-detected)
+#   ENV_FILE             /path/to/.env                (optional)
+#
+# Preferred safer auth:
+#   printf '%s\n' '<your-prior-labs-token>' > /scratch/ab1234/tabpfn_token.txt
+#   chmod 600 /scratch/ab1234/tabpfn_token.txt
+#   sbatch --account=torch_pr_xxx_yyy \
+#          --export=ALL,NETID=ab1234,DATASET=pcam,CONDA_ENV=/scratch/ab1234/conda-envs/gpc,TABPFN_TOKEN_FILE=/scratch/ab1234/tabpfn_token.txt \
+#          scripts/exp4_tabpfn_baseline.sbatch
+#
+# Inline option, less safe because it may end up in shell history:
+#   sbatch --account=torch_pr_xxx_yyy \
+#          --export=ALL,NETID=ab1234,DATASET=pcam,CONDA_ENV=/scratch/ab1234/conda-envs/gpc,TABPFN_TOKEN='<your-token>' \
+#          scripts/exp4_tabpfn_baseline.sbatch
 
 SBATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$(cd "${SBATCH_DIR}/.." && pwd)}}"
@@ -49,7 +68,8 @@ DATA_ROOT="${DATA_ROOT:-datasets}"
 EMBEDDING_DIR="${EMBEDDING_DIR:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-data}"
 DEVICE="${DEVICE:-cuda}"
-MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-50000}"
+MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-3500}"
+TABPFN_TOKEN_FILE="${TABPFN_TOKEN_FILE:-}"
 PREDICT_CHUNK_SIZE="${PREDICT_CHUNK_SIZE:-1000}"
 SEED="${SEED:-42}"
 
