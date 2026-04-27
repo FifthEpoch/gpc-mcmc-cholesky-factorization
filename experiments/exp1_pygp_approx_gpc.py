@@ -22,14 +22,18 @@ import numpy as np
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC_PATH = os.path.join(PROJECT_ROOT, "src")
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+if SRC_PATH not in sys.path:
+    sys.path.insert(0, SRC_PATH)
 
 from predictive_metrics import (
     evaluate_binary_probabilistic_predictions,
     print_metric_table,
     print_posterior_statistics,
 )
+from my_cholesky.result_logging import append_result_rows
 
 
 def make_fake_blobs(seed: int = 42, n_per_class: int = 1000):
@@ -270,10 +274,29 @@ def main() -> None:
         },
         allow_pickle=True,
     )
+    csv_path = append_result_rows(
+        [
+            {
+                "experiment": "exp1",
+                "script_path": "experiments/exp1_pygp_approx_gpc.py",
+                "artifacts": "data/exp1_pygp_la_ep_results.npy",
+                "dataset": "synthetic_two_blob",
+                "data_seed": 42,
+                "method_name": method,
+                "n_train": int(len(y)),
+                "n_test": int(len(y_test)),
+                "fit_or_train_time_sec": results[method]["fit_time"],
+                "inference_time_sec": results[method]["pred_time"],
+                **results[method]["test_metrics"],
+            }
+            for method in methods
+        ]
+    )
 
     print("Saved:")
     print("- data/exp1_pygp_la_ep_all.png")
     print("- data/exp1_pygp_la_ep_results.npy")
+    print(f"- appended CSV metrics to {csv_path}")
 
 
 if __name__ == "__main__":

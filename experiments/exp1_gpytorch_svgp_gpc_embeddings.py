@@ -9,7 +9,8 @@ This version:
 
 3. Adds:
    - elpd = sum_i log p(y_i | x_i, D)
-   - pell = mean_i log p(y_i | x_i, D)
+   - pell is left unset because this script produces point posterior predictive
+     probabilities rather than posterior predictive probability samples
    - posterior_expected_log_loss = mean_i[-log p(y_i | x_i, D)]
    - posterior_total_log_loss = sum_i[-log p(y_i | x_i, D)]
 
@@ -33,17 +34,22 @@ import numpy as np
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC_PATH = os.path.join(PROJECT_ROOT, "src")
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+if SRC_PATH not in sys.path:
+    sys.path.insert(0, SRC_PATH)
 
 try:
     from predictive_metrics import (
         evaluate_binary_probabilistic_predictions,
         print_metric_table,
     )
+    from my_cholesky.result_logging import append_result_row
 except Exception:
     evaluate_binary_probabilistic_predictions = None
     print_metric_table = None
+    append_result_row = None
 
 
 EPS = 1e-12
@@ -279,7 +285,7 @@ def binary_metrics(
     )
 
     elpd = float(np.sum(log_prob_i))
-    pell = float(np.mean(log_prob_i))
+    elpd_mean = float(np.mean(log_prob_i))
 
     posterior_log_loss_i = -log_prob_i
     posterior_expected_log_loss = float(np.mean(posterior_log_loss_i))
@@ -306,25 +312,36 @@ def binary_metrics(
 
         metrics.update(
             {
-                "log_likelihood_mean": pell,
+                "log_likelihood_mean": elpd_mean,
                 "negative_log_likelihood_mean": posterior_expected_log_loss,
                 "brier": float(np.mean((p_clip - y_true) ** 2)),
                 "accuracy": float(np.mean(y_pred == y_true)),
                 "number_errors": int(np.sum(y_pred != y_true)),
                 "sensitivity_TPR": float(tp / max(tp + fn, 1)),
+                "sensitivity_tpr": float(tp / max(tp + fn, 1)),
                 "FNR": float(fn / max(tp + fn, 1)),
+                "false_negative_rate": float(fn / max(tp + fn, 1)),
                 "specificity_TNR": float(tn / max(tn + fp, 1)),
+                "specificity_tnr": float(tn / max(tn + fp, 1)),
                 "FPR": float(fp / max(tn + fp, 1)),
+                "false_positive_rate": float(fp / max(tn + fp, 1)),
                 "TP": tp,
+                "tp": tp,
                 "FP": fp,
+                "fp": fp,
                 "TN": tn,
+                "tn": tn,
                 "FN": fn,
+                "fn": fn,
             }
         )
 
     metrics["elpd"] = elpd
-    metrics["pell"] = pell
-    metrics["mean_predictive_log_likelihood"] = pell
+    metrics["pell"] = np.nan
+    metrics["pell_mean"] = np.nan
+    metrics["elpd_mean"] = elpd_mean
+    metrics["mean_predictive_log_likelihood"] = elpd_mean
+    metrics["predictive_likelihood"] = float(np.exp(elpd_mean))
 
     metrics["posterior_expected_log_loss"] = posterior_expected_log_loss
     metrics["posterior_log_loss_mean"] = posterior_expected_log_loss
@@ -669,6 +686,36 @@ def main() -> None:
         prob_test=p_test,
         y_test=test.y,
     )
+    if append_result_row is not None:
+        csv_path = append_result_row(
+            {
+                "experiment": "exp1",
+                "script_path": "experiments/exp1_gpytorch_svgp_gpc_embeddings.py",
+                "artifacts": results_path,
+                "dataset": os.path.basename(os.path.normpath(args.dataset_root)),
+                "seed": args.seed,
+                "method_name": "gpytorch_svgp_embeddings",
+                "embedding_root": args.dataset_root,
+                "embedding_variant": args.embedding_file,
+                "feature_dim": int(train.X.shape[1]),
+                "num_inducing": int(num_inducing),
+                "batch_size": args.batch_size,
+                "learning_rate": args.learning_rate,
+                "epochs": args.num_epochs,
+                "max_train_samples": args.max_train,
+                "max_valid_samples": args.max_valid,
+                "max_test_samples": args.max_test,
+                "device": str(device),
+                "fit_or_train_time_sec": float(train_time),
+                "inference_time_sec": float(pred_time),
+                "train_loss": float(epoch_losses[-1]) if epoch_losses else float("nan"),
+                "n_train": int(train.X.shape[0]),
+                "n_val": int(valid.X.shape[0]),
+                "n_test": int(test.X.shape[0]),
+                **test_metrics,
+            }
+        )
+        print(f"Appended CSV metrics to {csv_path}")
 
     if args.save_model:
         model_path = os.path.join(

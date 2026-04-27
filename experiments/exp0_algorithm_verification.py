@@ -36,6 +36,7 @@ if SRC_PATH not in sys.path:
 
 from my_cholesky.arpcholesky import arpcholesky
 from my_cholesky.matrix import KernelMatrix
+from my_cholesky.result_logging import append_result_rows
 from my_cholesky.rpcholesky_variants import block_rpcholesky, simple_rpcholesky
 
 
@@ -200,12 +201,66 @@ def main() -> None:
     plt.tight_layout()
     plt.savefig("data/exp0_time_vs_N.png", dpi=160)
     plt.close()
+    csv_rows = []
+    for method_name in methods:
+        for idx, k in enumerate(ks):
+            csv_rows.append(
+                {
+                    "experiment": "exp0",
+                    "script_path": "experiments/exp0_algorithm_verification.py",
+                    "artifacts": "data/exp0_results.mat",
+                    "data_generator": "uniform_gaussian_kernel",
+                    "data_seed": 11,
+                    "kernel": "gaussian",
+                    "kernel_bandwidth": bandwidth,
+                    "synthetic_d": d,
+                    "fixed_n": fixed_n,
+                    "n": fixed_n,
+                    "k": int(k),
+                    "trials": trials,
+                    "block_size_b": b,
+                    "method_name": method_name,
+                    "timing_scope": "factorization_only",
+                    "mean_time_sec": float(np.mean(times[method_name][idx, :])),
+                    "std_time_sec": float(np.std(times[method_name][idx, :])),
+                    "factor_time_sec": float(np.mean(times[method_name][idx, :])),
+                    "approx_error_fro_rel": float(np.mean(errs[method_name][idx, :])),
+                    "unavailable_reason": "classification metrics are not applicable to kernel factorization benchmark",
+                }
+            )
+    for method_name in methods:
+        for idx, n in enumerate(n_values):
+            if not np.isfinite(times_vs_n[method_name][idx]):
+                continue
+            csv_rows.append(
+                {
+                    "experiment": "exp0",
+                    "script_path": "experiments/exp0_algorithm_verification.py",
+                    "artifacts": "data/exp0_results.mat",
+                    "data_generator": "uniform_gaussian_kernel",
+                    "data_seed": 100 + idx,
+                    "kernel": "gaussian",
+                    "kernel_bandwidth": bandwidth,
+                    "synthetic_d": d,
+                    "n": int(n),
+                    "k": int(k_values_for_n[idx]),
+                    "trials": trials,
+                    "block_size_b": b,
+                    "method_name": method_name,
+                    "timing_scope": "factorization_only",
+                    "mean_time_sec": float(times_vs_n[method_name][idx]),
+                    "factor_time_sec": float(times_vs_n[method_name][idx]),
+                    "unavailable_reason": "classification metrics are not applicable to kernel factorization benchmark",
+                }
+            )
+    csv_path = append_result_rows(csv_rows)
 
     print("Saved:")
     print("- data/exp0_results.mat")
     print("- data/exp0_error_vs_k.png")
     print("- data/exp0_time_vs_k.png")
     print("- data/exp0_time_vs_N.png")
+    print(f"- appended CSV metrics to {csv_path}")
 
 
 if __name__ == "__main__":

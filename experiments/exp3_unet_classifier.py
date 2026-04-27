@@ -28,14 +28,7 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
-from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    brier_score_loss,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-)
+from sklearn.metrics import precision_score, recall_score
 from sklearn.model_selection import train_test_split
 from tqdm.auto import tqdm
 
@@ -43,6 +36,8 @@ from tqdm.auto import tqdm
 # Allow direct script execution without package install.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_PATH = os.path.join(PROJECT_ROOT, "src")
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
 
@@ -51,6 +46,8 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from models import UNetBinaryClassifier
+from my_cholesky.result_logging import append_result_row
+from predictive_metrics import evaluate_binary_probabilistic_predictions
 
 
 def parse_args() -> argparse.Namespace:
@@ -362,23 +359,19 @@ def compute_metrics(
     avg_loss: float,
 ) -> dict[str, float | None]:
     preds = (probs >= 0.5).astype(int)
-    metrics: dict[str, float | None] = {
+    metrics: dict[str, float | None] = evaluate_binary_probabilistic_predictions(
+        labels,
+        probs,
+        threshold=0.5,
+        n_bins=15,
+    )
+    metrics.update({
         "loss": float(avg_loss),
-        "accuracy": float(accuracy_score(labels, preds)),
         "precision": float(precision_score(labels, preds, zero_division=0)),
         "recall": float(recall_score(labels, preds, zero_division=0)),
-        "brier": float(brier_score_loss(labels, probs)),
         "positive_rate": float(np.mean(preds)),
         "target_positive_rate": float(np.mean(labels)),
-    }
-
-    unique_labels = np.unique(labels)
-    if unique_labels.size == 2:
-        metrics["auroc"] = float(roc_auc_score(labels, probs))
-        metrics["auprc"] = float(average_precision_score(labels, probs))
-    else:
-        metrics["auroc"] = None
-        metrics["auprc"] = None
+    })
     return metrics
 
 
@@ -711,6 +704,41 @@ def train_dataset(
     )
     print(f"[{dataset_name}] saved checkpoint: {best_checkpoint_path}")
     print(f"[{dataset_name}] saved metrics   : {output_dir / 'test_metrics.json'}")
+    train_time = float(sum(float(entry["seconds"]) for entry in history))
+    csv_path = append_result_row(
+        {
+            "experiment": "exp3",
+            "script_path": "experiments/exp3_unet_classifier.py",
+            "artifacts": json.dumps(
+                [
+                    str(best_checkpoint_path),
+                    str(output_dir / "history.json"),
+                    str(output_dir / "test_metrics.json"),
+                    str(output_dir / "test_predictions.csv"),
+                ]
+            ),
+            "dataset": dataset_name,
+            "seed": args.seed,
+            "method_name": "unet_classifier",
+            "model_architecture": "unet",
+            "base_channels": args.base_channels,
+            "image_size": args.image_size,
+            "num_workers": args.num_workers,
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "learning_rate": args.learning_rate,
+            "lr": args.learning_rate,
+            "weight_decay": args.weight_decay,
+            "device": str(device),
+            "n_train": len(split_records["train"]),
+            "n_val": len(split_records["valid"]),
+            "n_test": len(split_records["test"]),
+            "fit_or_train_time_sec": train_time,
+            "total_pipeline_time_sec": train_time,
+            **test_metrics,
+        }
+    )
+    print(f"[{dataset_name}] appended CSV metrics: {csv_path}")
 
 
 def main() -> None:

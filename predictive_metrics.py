@@ -8,6 +8,9 @@ from sklearn.metrics import (
 )
 
 
+EPS = 1e-12
+
+
 def expected_calibration_error(y_true, p_pred, n_bins=15):
     """ECE for binary probabilistic predictions."""
     y_true = np.asarray(y_true).astype(int)
@@ -33,17 +36,56 @@ def expected_calibration_error(y_true, p_pred, n_bins=15):
     return float(ece)
 
 
+def binary_log_predictive_terms(y_true, p_pred):
+    """Pointwise log p(y_i | x_i, D) for binary predictive probabilities."""
+    y_true = np.asarray(y_true).astype(int)
+    p_pred = np.asarray(p_pred).astype(float)
+    p_pred = np.clip(p_pred, EPS, 1.0 - EPS)
+    return y_true * np.log(p_pred) + (1 - y_true) * np.log(1.0 - p_pred)
+
+
+def posterior_expected_log_likelihood(y_true, p_samples):
+    """
+    PELL from posterior predictive probability samples.
+
+    Returns the posterior expectation of total log likelihood:
+    E_s[sum_i log p(y_i | theta_s, x_i)]. By Jensen's inequality this is <=
+    the marginal ELPD computed from the posterior-mean predictive probability.
+    """
+    y_true = np.asarray(y_true).astype(int).reshape(1, -1)
+    p_samples = np.asarray(p_samples).astype(float)
+    if p_samples.ndim != 2:
+        raise ValueError("p_samples must have shape (n_samples, n_observations)")
+    if p_samples.shape[1] != y_true.shape[1]:
+        raise ValueError(
+            "p_samples second dimension must match len(y_true): "
+            f"{p_samples.shape[1]} != {y_true.shape[1]}"
+        )
+    p_samples = np.clip(p_samples, EPS, 1.0 - EPS)
+    log_lik_by_sample = np.sum(
+        y_true * np.log(p_samples) + (1 - y_true) * np.log(1.0 - p_samples),
+        axis=1,
+    )
+    pell = float(np.mean(log_lik_by_sample))
+    return {
+        "pell": pell,
+        "pell_mean": float(pell / y_true.shape[1]),
+        "posterior_expected_log_loss": float(-pell / y_true.shape[1]),
+    }
+
+
 def evaluate_binary_probabilistic_predictions(
     y_true,
     p_pred,
     threshold=0.5,
     n_bins=15,
+    p_samples=None,
     latent_samples=None,
 ):
-    """Compute point-prediction metrics, plus Bayesian ELPD if latent samples are provided."""
+    """Compute probabilistic and classification metrics."""
     y_true = np.asarray(y_true).astype(int)
     p_pred = np.asarray(p_pred).astype(float)
-    p_pred = np.clip(p_pred, 1e-12, 1.0 - 1e-12)
+    p_pred = np.clip(p_pred, EPS, 1.0 - EPS)
 
     y_hat = (p_pred >= threshold).astype(int)
 
@@ -57,16 +99,7 @@ def evaluate_binary_probabilistic_predictions(
     specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else np.nan
     fpr = float(fp / (tn + fp)) if (tn + fp) > 0 else np.nan
 
-    # Pointwise log predictive probabilities:
-    #
-    # log p(y_i | x_i, D)
-    # =
-    # y_i log p_i + (1 - y_i) log(1 - p_i)
-    #
-    log_pred_prob_i = (
-        y_true * np.log(p_pred)
-        + (1 - y_true) * np.log(1.0 - p_pred)
-    )
+    log_pred_prob_i = binary_log_predictive_terms(y_true, p_pred)
 
     # ELPD: expected log predictive density over the dataset.
     # For classification this is the sum of log predictive probabilities.
@@ -110,8 +143,9 @@ def evaluate_binary_probabilistic_predictions(
         "TN": int(tn),
         "FN": int(fn),
     }
-
-    if latent_samples is not None:
+    if p_samples is not None:
+        metrics.update(posterior_expected_log_likelihood(y_true, p_samples))
+    elif latent_samples is not None:
         latent_samples = np.asarray(latent_samples, dtype=float)
         if latent_samples.ndim != 2:
             raise ValueError("latent_samples must have shape (n_samples, n_test)")
@@ -174,6 +208,33 @@ def print_metric_table(metrics, title="Metrics"):
             print(f"{key:32s}: {value:.6f}")
         else:
             print(f"{key:32s}: {value}")
+
+
+def print_posterior_statistics(
+    latent_mean=None,
+    latent_var=None,
+    prob_mean=None,
+    prob_var=None,
+    title="Posterior statistics",
+):
+    """Print compact summaries for latent and predictive posterior arrays."""
+    print(f"\n{title}")
+    print("-" * len(title))
+
+    values = {
+        "latent_mean": latent_mean,
+        "latent_var": latent_var,
+        "prob_mean": prob_mean,
+        "prob_var": prob_var,
+    }
+    for name, value in values.items():
+        if value is None:
+            continue
+        arr = np.asarray(value, dtype=float).reshape(-1)
+        print(
+            f"{name:32s}: mean={np.nanmean(arr):.6f} "
+            f"std={np.nanstd(arr):.6f} min={np.nanmin(arr):.6f} max={np.nanmax(arr):.6f}"
+        )
 
 
 def compare_against_reference(reference, candidate):

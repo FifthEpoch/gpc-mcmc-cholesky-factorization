@@ -56,13 +56,13 @@ Outcomes: `mean_time_sec`, `std_time_sec`, `mean_rel_trace_error`, `approx_error
 
 Record: `data_generator`, `data_seed`, `n_train`, `n_test`, `kernel`, `kernel_bandwidth`, `n_samples`, `n_warmup`, `k`, `rp_k_values`, `arpcholesky_b`, `rwm_seed`, `jitter`, `step_size`, `n_leapfrog`.
 
-Outcomes: `factor_time_sec`, `per_step_time_sec`, `total_mcmc_time_sec`, `accept_rate`, `final_step_size`, `approx_error_fro_rel`, `elpd`, `auroc`, `auprc`, `brier`, `ece`, `artifacts`.
+Outcomes: `factor_time_sec`, `per_step_time_sec`, `total_mcmc_time_sec`, `accept_rate`, `final_step_size`, `approx_error_fro_rel`, `elpd`, `pell` when posterior predictive samples are available, `auroc`, `auprc`, `brier`, `ece`, `artifacts`.
 
 ### Exp2: Proposed Method and MCMC Hyperparameter Sweeps
 
 Record every sweep parameter: `k`, `sampler`, `n_samples`, `n_warmup`, `n_walkers`, `step_size`, `n_leapfrog`, `arpcholesky_b`, `kernel`, `kernel_bandwidth`, `jitter`, `num_inducing`, `learning_rate`, `batch_size`, plus any custom hyperparameters in `notes`.
 
-Outcomes: `elpd`, `ess_logp`, `ess_per_sec`, `tau`, `accept_rate`, `per_step_time_sec`, `total_mcmc_time_sec`, `fit_or_train_time_sec`, `inference_time_sec`, `auroc`, `auprc`, `brier`, `ece`, `false_negative_rate`, `total_pipeline_time_sec`.
+Outcomes: `elpd`, `pell` when posterior predictive samples are available, `posterior_expected_log_loss` when scoring a posterior approximation without predictive samples, `ess_logp`, `ess_per_sec`, `tau`, `accept_rate`, `per_step_time_sec`, `total_mcmc_time_sec`, `fit_or_train_time_sec`, `inference_time_sec`, `auroc`, `auprc`, `brier`, `ece`, `false_negative_rate`, `total_pipeline_time_sec`.
 
 ### Exp3: Deterministic Baselines
 
@@ -110,7 +110,11 @@ For fair plots:
 
 | Field | Meaning |
 |---|---|
-| `elpd` | Expected log pointwise predictive density on held-out/test data. Higher is better. Important for proposed-method sweeps. |
+| `elpd` | Sum of held-out/test log predictive probabilities using the marginal predictive probability `p(y_i | x_i, D)`. Higher is better. |
+| `elpd_mean` | Mean per-example log predictive probability; this is `-negative_log_likelihood_mean`. |
+| `pell` | Posterior expected log likelihood from posterior predictive samples: `E_s[sum_i log p(y_i | theta_s, x_i)]`. Only fill when predictive samples exist. |
+| `posterior_expected_log_loss` | Mean posterior log loss. Use this for posterior approximation methods where PELL is not a valid predictive-sample quantity. Lower is better. |
+| `predictive_likelihood` | Geometric mean predictive likelihood, `exp(elpd_mean)`. Higher is better. |
 | `auroc`, `auprc` | Ranking performance metrics. Higher is better. |
 | `brier`, `ece` | Probabilistic calibration metrics. Lower is better. |
 | `tp`, `tn`, `fp`, `fn` | Confusion counts at `threshold`. |
