@@ -15,7 +15,7 @@ set -euo pipefail
 export PYTHONNOUSERSITE=1
 
 # Submit with, for example:
-#   sbatch --account=csci_ga_2565-2026sp --partition=<partition> \
+#   sbatch --account=csci_ga_sh 2565-2026sp --partition=<partition> \
 #          --export=ALL,NETID=sd6701 scripts/exp1_gpytorch_svgp_gpc_embeddings.sbatch
 #
 # Optional overrides:
