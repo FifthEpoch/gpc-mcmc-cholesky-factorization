@@ -21,7 +21,7 @@ fi
 SCRATCH_BASE="/scratch/${NETID}"
 PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
-DATASET="${DATASET:-all}"   # one of: pcam, camelyon17, all
+DATASET="${DATASET:-combined}"   # one of: pcam, camelyon17, combined (joint training)
 EPOCHS="${EPOCHS:-10}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
 MASK_RATIO="${MASK_RATIO:-0.0}"   # 0 disables masking; set >0 to enable
