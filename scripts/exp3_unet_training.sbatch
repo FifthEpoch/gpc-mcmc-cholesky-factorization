@@ -1,0 +1,94 @@
+#!/bin/bash
+#SBATCH --job-name=exp3_unet
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=8
+#SBATCH --gres=gpu:1
+#SBATCH --time=08:00:00
+#SBATCH --mem=64G
+#SBATCH --output=slurm_logs/%x_%j.out
+#SBATCH --error=slurm_logs/%x_%j.err
+
+set -euo pipefail
+export PYTHONNOUSERSITE=1
+
+NETID="${NETID:-<netid>}"
+if [ "${NETID}" = "<netid>" ]; then
+  echo "ERROR: NETID is required. Submit with --export=ALL,NETID=<your-netid>." >&2
+  exit 1
+fi
+
+SCRATCH_BASE="/scratch/${NETID}"
+PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
+CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
+DATASET="${DATASET:-pcam}"
+EPOCHS="${EPOCHS:-5}"
+BATCH_SIZE="${BATCH_SIZE:-32}"
+USE_WANDB="${USE_WANDB:-0}"
+WANDB_PROJECT="${WANDB_PROJECT:-ML-Final_project}"
+WANDB_ENTITY="${WANDB_ENTITY:-a-salt}"
+WANDB_MODE="${WANDB_MODE:-online}"
+WANDB_GROUP="${WANDB_GROUP:-}"
+
+SCRIPT_DIR="${PROJECT_ROOT}/scripts"
+if [ -f "${SCRIPT_DIR}/set_scratch_env.sh" ]; then
+  source "${SCRIPT_DIR}/set_scratch_env.sh"
+fi
+
+module purge
+module load anaconda3/2025.06
+source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
+
+if [ ! -d "${CONDA_ENV}" ]; then
+  echo "ERROR: Conda env not found at ${CONDA_ENV}" >&2
+  exit 1
+fi
+
+conda activate "${CONDA_ENV}"
+unset PYTHONHOME
+unset PYTHONPATH
+
+PYTHON="${CONDA_ENV}/bin/python"
+cd "${PROJECT_ROOT}"
+mkdir -p slurm_logs
+mkdir -p data/exp3_unet
+
+echo "=============================================================================="
+echo "Experiment 3: U-Net pathology classifier"
+echo "=============================================================================="
+echo "Job ID       : ${SLURM_JOB_ID}"
+echo "Node         : $(hostname)"
+echo "Dataset      : ${DATASET}"
+echo "Epochs       : ${EPOCHS}"
+echo "Batch size   : ${BATCH_SIZE}"
+echo "Use W&B      : ${USE_WANDB}"
+echo "Project root : ${PROJECT_ROOT}"
+echo "Conda env    : ${CONDA_ENV}"
+echo "=============================================================================="
+
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
+export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
+
+WANDB_ARGS=()
+if [ "${USE_WANDB}" = "1" ]; then
+  WANDB_ARGS+=(--wandb --wandb-project "${WANDB_PROJECT}" --wandb-mode "${WANDB_MODE}")
+  if [ -n "${WANDB_ENTITY}" ]; then
+    WANDB_ARGS+=(--wandb-entity "${WANDB_ENTITY}")
+  fi
+  if [ -n "${WANDB_GROUP}" ]; then
+    WANDB_ARGS+=(--wandb-group "${WANDB_GROUP}")
+  fi
+fi
+
+"${PYTHON}" experiments/exp3_unet_classifier.py \
+  --dataset "${DATASET}" \
+  --data-root "${PROJECT_ROOT}/datasets" \
+  --output-root "${PROJECT_ROOT}/data/exp3_unet" \
+  --epochs "${EPOCHS}" \
+  --batch-size "${BATCH_SIZE}" \
+  "${WANDB_ARGS[@]}"
+
+echo "=============================================================================="
+echo "Done: $(date)"
+echo "Outputs saved under ${PROJECT_ROOT}/data/exp3_unet"
+echo "=============================================================================="

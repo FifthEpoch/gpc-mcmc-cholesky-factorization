@@ -37,7 +37,9 @@ done
 # ============================================================================
 module purge || true
 module load anaconda3/2025.06
-source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
+# source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
+source /scratch/sd6701/miniconda3/etc/profile.d/conda.sh
+
 
 # Configure conda to use scratch directories
 conda config --add envs_dirs "${SCRATCH_BASE}/conda-envs" 2>/dev/null || true

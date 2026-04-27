@@ -1,8 +1,9 @@
 """
 Experiment 3: Deterministic neural network baseline.
 
-Trains a 2-layer MLP on frozen embeddings extracted by extract_embeddings.py
-and evaluates AUROC, AUPRC, ECE, Brier score, sensitivity, and FNR.
+Trains a configurable neural network head on frozen embeddings extracted by
+extract_embeddings.py and evaluates AUROC, AUPRC, ECE, Brier score,
+sensitivity, and FNR.
 
 Usage:
     python experiments/exp3_nn_baseline.py \
@@ -14,11 +15,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
-from time import time
+from time import perf_counter
 
 import matplotlib
 matplotlib.use("Agg")
@@ -40,11 +43,17 @@ from my_cholesky.eval_metrics import (
     plot_reliability_diagram,
 )
 
+HG_DATASET_ROOTS = {
+    "pcam": "pcam-hg",
+    "camelyon17": "camelyon17-hg",
+    "embed": "embed",
+}
+
 
 class MLPClassifier(nn.Module):
     """2-layer MLP head for binary classification on frozen embeddings."""
 
-    def __init__(self, input_dim: int = 1024, hidden_dim: int = 256, dropout: float = 0.3):
+    def __init__(self, input_dim: int = 512, hidden_dim: int = 256, dropout: float = 0.3):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -57,12 +66,166 @@ class MLPClassifier(nn.Module):
         return self.net(x).squeeze(-1)
 
 
+class LinearClassifier(nn.Module):
+    """Linear probe for binary classification on frozen embeddings."""
+
+    def __init__(self, input_dim: int = 512):
+        super().__init__()
+        self.linear = nn.Linear(input_dim, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear(x).squeeze(-1)
+
+
+class ResidualMLPBlock(nn.Module):
+    """Pre-norm residual MLP block for a stronger frozen-embedding classifier."""
+
+    def __init__(self, hidden_dim: int, dropout: float):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.net(x)
+
+
+class ResidualMLPClassifier(nn.Module):
+    """Residual MLP head inspired by modern projection heads for frozen encoders."""
+
+    def __init__(
+        self,
+        input_dim: int = 512,
+        hidden_dim: int = 512,
+        num_layers: int = 3,
+        dropout: float = 0.3,
+    ):
+        super().__init__()
+        self.input_norm = nn.LayerNorm(input_dim)
+        self.stem = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.blocks = nn.Sequential(
+            *[ResidualMLPBlock(hidden_dim=hidden_dim, dropout=dropout) for _ in range(num_layers)]
+        )
+        self.head = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.input_norm(x)
+        x = self.stem(x)
+        x = self.blocks(x)
+        return self.head(x).squeeze(-1)
+
+
+def build_model(args: argparse.Namespace, input_dim: int) -> nn.Module:
+    if args.model_arch == "linear":
+        return LinearClassifier(input_dim=input_dim)
+    if args.model_arch == "mlp":
+        return MLPClassifier(input_dim=input_dim, hidden_dim=args.hidden_dim, dropout=args.dropout)
+    if args.model_arch == "residual_mlp":
+        return ResidualMLPClassifier(
+            input_dim=input_dim,
+            hidden_dim=args.hidden_dim,
+            num_layers=args.num_layers,
+            dropout=args.dropout,
+        )
+    raise ValueError(f"Unknown model architecture: {args.model_arch}")
+
+
+def count_parameters(model: nn.Module) -> int:
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 def load_embeddings(
     emb_dir: Path, dataset: str, split: str
 ) -> tuple[np.ndarray, np.ndarray]:
-    emb = np.load(emb_dir / f"{dataset}_{split}_embeddings.npy")
-    lbl = np.load(emb_dir / f"{dataset}_{split}_labels.npy")
-    return emb, lbl
+    # Format 1 (default project format):
+    #   <emb_dir>/<dataset>_<split>_embeddings.npy
+    #   <emb_dir>/<dataset>_<split>_labels.npy
+    emb_path = emb_dir / f"{dataset}_{split}_embeddings.npy"
+    lbl_path = emb_dir / f"{dataset}_{split}_labels.npy"
+    if emb_path.exists() and lbl_path.exists():
+        emb = np.load(emb_path)
+        lbl = np.asarray(np.load(lbl_path)).reshape(-1)
+        print(f"[load_embeddings] {dataset}:{split} features <- {emb_path}")
+        print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_path}")
+        return emb, lbl
+
+    # Format 2 (partner HG export layout), either:
+    #   <emb_dir>/<dataset>-hg/<split_dir>/embeddings/...
+    # or
+    #   <emb_dir>/<split_dir>/embeddings/...
+    split_dir = "valid" if split == "val" else split
+    dataset_roots = [
+        emb_dir / f"{dataset}-hg",
+        emb_dir / dataset,
+        emb_dir,
+    ]
+    candidate_emb_files = ["projected_512.npy", "embeddings.npy"]
+    candidate_lbl_files = ["y_embeddings.npy", "labels.npy"]
+
+    for ds_root in dataset_roots:
+        split_root = ds_root / split_dir
+        emb_root = split_root / "embeddings"
+        if not emb_root.exists():
+            continue
+
+        emb_file = next((emb_root / name for name in candidate_emb_files if (emb_root / name).exists()), None)
+        if emb_file is None:
+            continue
+
+        lbl_file = next((emb_root / name for name in candidate_lbl_files if (emb_root / name).exists()), None)
+        if lbl_file is not None:
+            emb = np.load(emb_file)
+            lbl = np.asarray(np.load(lbl_file)).reshape(-1)
+            print(f"[load_embeddings] {dataset}:{split} features <- {emb_file}")
+            print(f"[load_embeddings] {dataset}:{split} labels   <- {lbl_file}")
+            return emb, lbl
+
+        csv_path = split_root / "labels.csv"
+        if csv_path.exists():
+            labels = _load_labels_from_csv(csv_path)
+            emb = np.load(emb_file)
+            print(f"[load_embeddings] {dataset}:{split} features <- {emb_file}")
+            print(f"[load_embeddings] {dataset}:{split} labels   <- {csv_path}")
+            return emb, labels
+
+    raise FileNotFoundError(
+        "Could not find embeddings for dataset="
+        f"{dataset!r}, split={split!r} under {emb_dir}. "
+        "Expected either standard files "
+        f"({dataset}_{split}_embeddings.npy / {dataset}_{split}_labels.npy) "
+        "or partner HG layout under <root>/<dataset>-hg/<split>/embeddings/."
+    )
+
+
+def _load_labels_from_csv(csv_path: Path) -> np.ndarray:
+    """Read labels from split-level labels.csv (expects a 'label' column)."""
+    labels: list[int] = []
+    with csv_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            raise ValueError(f"labels.csv has no header: {csv_path}")
+        if "label" in reader.fieldnames:
+            key = "label"
+        elif "y" in reader.fieldnames:
+            key = "y"
+        else:
+            key = reader.fieldnames[0]
+        for row in reader:
+            labels.append(int(row[key]))
+    return np.asarray(labels, dtype=np.int64)
 
 
 def make_loader(
@@ -107,7 +270,39 @@ def predict(model: nn.Module, loader: DataLoader, device: torch.device) -> np.nd
     return np.concatenate(probs)
 
 
+def confusion_counts_rates(
+    y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5
+) -> dict[str, float]:
+    """Return TP/TN/FP/FN counts and common classification rates."""
+    y_true = y_true.astype(int)
+    y_pred = (y_prob >= threshold).astype(int)
+
+    tp = int(np.sum((y_pred == 1) & (y_true == 1)))
+    tn = int(np.sum((y_pred == 0) & (y_true == 0)))
+    fp = int(np.sum((y_pred == 1) & (y_true == 0)))
+    fn = int(np.sum((y_pred == 0) & (y_true == 1)))
+
+    tpr = tp / max(tp + fn, 1)  # sensitivity / recall
+    tnr = tn / max(tn + fp, 1)  # specificity
+    fpr = fp / max(fp + tn, 1)
+    fnr = fn / max(fn + tp, 1)
+
+    return {
+        "tp": tp,
+        "tn": tn,
+        "fp": fp,
+        "fn": fn,
+        "true_positive_rate": float(tpr),
+        "true_negative_rate": float(tnr),
+        "false_positive_rate": float(fpr),
+        "false_negative_rate": float(fnr),
+    }
+
+
 def run_experiment(args: argparse.Namespace) -> dict:
+    experiment_start = datetime.now().astimezone()
+    experiment_start_ts = perf_counter()
+
     device = torch.device(args.device)
     emb_dir = Path(args.embedding_dir)
     out_dir = Path(args.output_dir)
@@ -115,20 +310,31 @@ def run_experiment(args: argparse.Namespace) -> dict:
 
     ds = args.dataset
 
+    load_start = perf_counter()
     train_emb, train_lbl = load_embeddings(emb_dir, ds, "train")
     val_emb, val_lbl = load_embeddings(emb_dir, ds, "val")
     test_emb, test_lbl = load_embeddings(emb_dir, ds, "test")
+    data_loading_time = perf_counter() - load_start
 
     input_dim = train_emb.shape[1]
     print(f"Dataset: {ds}")
     print(f"  train: {train_emb.shape[0]}  val: {val_emb.shape[0]}  test: {test_emb.shape[0]}")
     print(f"  feature dim: {input_dim}")
+    print(f"  model arch: {args.model_arch}")
+    if args.model_arch == "linear":
+        print("  linear probe: no hidden layers")
+    elif args.model_arch == "residual_mlp":
+        print(f"  hidden dim: {args.hidden_dim}  residual layers: {args.num_layers}  dropout: {args.dropout}")
+    else:
+        print(f"  hidden dim: {args.hidden_dim}  dropout: {args.dropout}")
 
     train_loader = make_loader(train_emb, train_lbl, args.batch_size, shuffle=True)
     val_loader = make_loader(val_emb, val_lbl, args.batch_size, shuffle=False)
     test_loader = make_loader(test_emb, test_lbl, args.batch_size, shuffle=False)
 
-    model = MLPClassifier(input_dim=input_dim, hidden_dim=args.hidden_dim, dropout=args.dropout).to(device)
+    model = build_model(args, input_dim=input_dim).to(device)
+    n_parameters = count_parameters(model)
+    print(f"  trainable parameters: {n_parameters:,}")
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
@@ -138,9 +344,12 @@ def run_experiment(args: argparse.Namespace) -> dict:
     best_state = None
 
     print(f"\nTraining for up to {args.epochs} epochs (patience={args.patience})...")
-    train_start = time()
+    print(f"Experiment start time: {experiment_start.isoformat(timespec='seconds')}")
+    train_start = perf_counter()
+    epochs_ran = 0
 
     for epoch in range(1, args.epochs + 1):
+        epochs_ran = epoch
         loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
         scheduler.step()
 
@@ -160,32 +369,56 @@ def run_experiment(args: argparse.Namespace) -> dict:
                 print(f"  Early stopping at epoch {epoch} (best val AUROC: {best_val_auroc:.4f})")
                 break
 
-    train_time = time() - train_start
+    train_time = perf_counter() - train_start
     print(f"Training time: {train_time:.2f}s")
 
+    if best_state is None:
+        raise RuntimeError("No valid checkpoint was selected during training.")
     model.load_state_dict(best_state)
     model.to(device)
 
-    infer_start = time()
+    infer_start = perf_counter()
     test_probs = predict(model, test_loader, device)
-    infer_time = time() - infer_start
+    infer_time = perf_counter() - infer_start
 
+    evaluation_start = perf_counter()
     metrics = compute_all_metrics(test_lbl, test_probs, threshold=0.5, n_bins=15)
+    metrics.update(confusion_counts_rates(test_lbl, test_probs, threshold=0.5))
+    metrics["timing_scope"] = "data_loading, training, test_inference, evaluation_plots"
+    metrics["data_loading_time_sec"] = round(data_loading_time, 3)
     metrics["train_time_sec"] = round(train_time, 3)
+    metrics["fit_or_train_time_sec"] = round(train_time, 3)
     metrics["inference_time_sec"] = round(infer_time, 3)
     metrics["best_val_auroc"] = round(best_val_auroc, 6)
+    metrics["model_architecture"] = args.model_arch
+    metrics["hidden_dim"] = int(args.hidden_dim if args.model_arch != "linear" else 0)
+    metrics["num_layers"] = int(args.num_layers if args.model_arch == "residual_mlp" else 0)
+    metrics["dropout"] = float(args.dropout if args.model_arch != "linear" else 0.0)
+    metrics["learning_rate"] = float(args.lr)
+    metrics["weight_decay"] = float(args.weight_decay)
+    metrics["batch_size"] = int(args.batch_size)
+    metrics["epochs_requested"] = int(args.epochs)
+    metrics["epochs_ran"] = int(epochs_ran)
+    metrics["trainable_parameters"] = int(n_parameters)
     metrics["n_train"] = int(len(train_lbl))
+    metrics["n_val"] = int(len(val_lbl))
     metrics["n_test"] = int(len(test_lbl))
 
     print(f"\nTest metrics ({ds}):")
     for k, v in metrics.items():
         print(f"  {k:25s}: {v}")
+    print("\nConfusion details (@ threshold=0.5):")
+    print(f"  TP={metrics['tp']}  TN={metrics['tn']}  FP={metrics['fp']}  FN={metrics['fn']}")
+    print(
+        "  TPR={:.4f}  TNR={:.4f}  FPR={:.4f}  FNR={:.4f}".format(
+            metrics["true_positive_rate"],
+            metrics["true_negative_rate"],
+            metrics["false_positive_rate"],
+            metrics["false_negative_rate"],
+        )
+    )
 
     results_path = out_dir / f"exp3_{ds}_results.json"
-    with open(results_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"\nSaved: {results_path}")
-
     fig, _ = plot_reliability_diagram(
         test_lbl, test_probs, n_bins=15, title=f"Exp3 Reliability Diagram ({ds})"
     )
@@ -227,6 +460,25 @@ def run_experiment(args: argparse.Namespace) -> dict:
                 json.dump(per_hospital, f, indent=2)
             print(f"Saved: {ph_path}")
 
+    experiment_end = datetime.now().astimezone()
+    total_runtime = perf_counter() - experiment_start_ts
+    evaluation_time = perf_counter() - evaluation_start
+    metrics["experiment_start_time"] = experiment_start.isoformat(timespec="seconds")
+    metrics["experiment_end_time"] = experiment_end.isoformat(timespec="seconds")
+    metrics["evaluation_time_sec"] = round(evaluation_time, 3)
+    metrics["total_runtime_sec"] = round(total_runtime, 3)
+    metrics["total_pipeline_time_sec"] = round(total_runtime, 3)
+
+    print(f"\nTest metrics ({ds}):")
+    for k, v in metrics.items():
+        print(f"  {k:25s}: {v}")
+
+    with open(results_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"\nSaved: {results_path}")
+    print(f"Experiment end time:   {experiment_end.isoformat(timespec='seconds')}")
+    print(f"Total runtime:         {total_runtime:.2f}s")
+
     return metrics
 
 
@@ -235,7 +487,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", type=str, required=True, choices=["pcam", "camelyon17", "embed"])
     parser.add_argument("--embedding-dir", type=str, default="data/embeddings")
     parser.add_argument("--output-dir", type=str, default="data")
-    parser.add_argument("--hidden-dim", type=int, default=256)
+    parser.add_argument("--model-arch", type=str, default="residual_mlp", choices=["linear", "mlp", "residual_mlp"])
+    parser.add_argument("--hidden-dim", type=int, default=512)
+    parser.add_argument("--num-layers", type=int, default=3)
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
