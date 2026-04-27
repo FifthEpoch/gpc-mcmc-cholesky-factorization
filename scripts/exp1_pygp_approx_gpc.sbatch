@@ -27,6 +27,8 @@ export PYTHONNOUSERSITE=1
 #   MAX_TRAIN_SAMPLES    10000
 #   MAX_TEST_SAMPLES     10000
 #   STANDARDIZE          1 | 0                      (default: 1)
+#   KERNEL_BANDWIDTH     1.0
+#   KERNEL_SIGNAL_STD    1.0
 #   OUTPUT_DIR           data
 #   SEED                 42
 
@@ -64,6 +66,8 @@ TEST_SPLIT="${TEST_SPLIT:-test}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-10000}"
 MAX_TEST_SAMPLES="${MAX_TEST_SAMPLES:-10000}"
 STANDARDIZE="${STANDARDIZE:-1}"
+KERNEL_BANDWIDTH="${KERNEL_BANDWIDTH:-1.0}"
+KERNEL_SIGNAL_STD="${KERNEL_SIGNAL_STD:-1.0}"
 OUTPUT_DIR="${OUTPUT_DIR:-data}"
 SEED="${SEED:-42}"
 
@@ -123,7 +127,7 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export MPLCONFIGDIR="${TMPDIR:-/tmp}/mpl-${SLURM_JOB_ID:-$$}"
 
-mkdir -p "${PROJECT_ROOT}/slurm_logs"
+mkdir -p "${PROJECT_ROOT}/slurm_logs/exp1_py_gp_lp_ep"
 mkdir -p "${PROJECT_ROOT}/${OUTPUT_DIR}"
 mkdir -p "${MPLCONFIGDIR}"
 
@@ -156,6 +160,8 @@ echo "Test split        : ${TEST_SPLIT}"
 echo "Max train samples : ${MAX_TRAIN_SAMPLES}"
 echo "Max test samples  : ${MAX_TEST_SAMPLES}"
 echo "Standardize       : ${STANDARDIZE}"
+echo "Kernel bandwidth  : ${KERNEL_BANDWIDTH}"
+echo "Kernel signal std : ${KERNEL_SIGNAL_STD}"
 echo "Output dir        : ${OUTPUT_DIR}"
 echo "Seed              : ${SEED}"
 echo "=============================================================================="
@@ -168,6 +174,8 @@ CMD=(
   "--test-split" "${TEST_SPLIT}"
   "--max-train-samples" "${MAX_TRAIN_SAMPLES}"
   "--max-test-samples" "${MAX_TEST_SAMPLES}"
+  "--kernel-bandwidth" "${KERNEL_BANDWIDTH}"
+  "--kernel-signal-std" "${KERNEL_SIGNAL_STD}"
   "--output-dir" "${OUTPUT_DIR}"
   "--seed" "${SEED}"
 )
