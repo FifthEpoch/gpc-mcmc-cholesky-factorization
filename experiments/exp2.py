@@ -35,7 +35,7 @@ if PROJECT_ROOT not in sys.path:
 
 from my_cholesky.kernels import GaussianKernel_mtx
 from my_cholesky.result_logging import append_result_row
-from predictive_metrics import (
+from predictive_metrics2 import (
     evaluate_binary_probabilistic_predictions,
     print_metric_table,
     summarize_predictive_distribution,

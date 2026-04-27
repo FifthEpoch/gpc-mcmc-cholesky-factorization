@@ -1,9 +1,9 @@
 import numpy as np
+from scipy.special import log_expit
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
     confusion_matrix,
-    log_loss,
     roc_auc_score,
 )
 
@@ -71,8 +71,6 @@ def posterior_expected_log_likelihood(y_true, p_samples):
         "pell": pell,
         "pell_mean": float(pell / y_true.shape[1]),
         "posterior_expected_log_loss": float(-pell / y_true.shape[1]),
-        "posterior_log_loss_mean": float(-pell / y_true.shape[1]),
-        "posterior_total_log_loss": float(-pell),
     }
 
 
@@ -82,6 +80,7 @@ def evaluate_binary_probabilistic_predictions(
     threshold=0.5,
     n_bins=15,
     p_samples=None,
+    latent_samples=None,
 ):
     """Compute probabilistic and classification metrics."""
     y_true = np.asarray(y_true).astype(int)
@@ -100,18 +99,13 @@ def evaluate_binary_probabilistic_predictions(
     specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else np.nan
     fpr = float(fp / (tn + fp)) if (tn + fp) > 0 else np.nan
 
-    # Mean negative log predictive probability
-    nll = float(log_loss(y_true, p_pred, labels=[0, 1]))
-
-    # Mean log predictive probability
-    log_likelihood = -nll
-
     log_pred_prob_i = binary_log_predictive_terms(y_true, p_pred)
 
     # ELPD: expected log predictive density over the dataset.
     # For classification this is the sum of log predictive probabilities.
     elpd = float(np.sum(log_pred_prob_i))
     elpd_mean = float(np.mean(log_pred_prob_i))
+    nll = float(-elpd_mean)
 
     brier = float(brier_score_loss(y_true, p_pred))
     ece = expected_calibration_error(y_true, p_pred, n_bins=n_bins)
@@ -127,42 +121,53 @@ def evaluate_binary_probabilistic_predictions(
         auprc = np.nan
 
     metrics = {
-        "log_likelihood_mean": log_likelihood,
-        "negative_log_likelihood_mean": nll,
-
         "elpd": elpd,
         "elpd_mean": elpd_mean,
-
         "pell": np.nan,
         "pell_mean": np.nan,
-        "mean_predictive_log_likelihood": elpd_mean,
-        "predictive_likelihood": float(np.exp(elpd_mean)),
+        "negative_log_likelihood_mean": nll,
+        "posterior_expected_log_loss": np.nan,
 
-        "brier": brier,
-        "ece": ece,
+        "accuracy": accuracy,
         "auroc": auroc,
         "auprc": auprc,
-        "accuracy": accuracy,
+        "brier": brier,
+        "ece": ece,
         "number_errors": number_errors,
         "sensitivity_TPR": sensitivity,
-        "sensitivity_tpr": sensitivity,
         "FNR": fnr,
-        "false_negative_rate": fnr,
         "specificity_TNR": specificity,
-        "specificity_tnr": specificity,
         "FPR": fpr,
-        "false_positive_rate": fpr,
         "TP": int(tp),
-        "tp": int(tp),
         "FP": int(fp),
-        "fp": int(fp),
         "TN": int(tn),
-        "tn": int(tn),
         "FN": int(fn),
-        "fn": int(fn),
     }
     if p_samples is not None:
         metrics.update(posterior_expected_log_likelihood(y_true, p_samples))
+    elif latent_samples is not None:
+        latent_samples = np.asarray(latent_samples, dtype=float)
+        if latent_samples.ndim != 2:
+            raise ValueError("latent_samples must have shape (n_samples, n_test)")
+        if latent_samples.shape[1] != y_true.shape[0]:
+            raise ValueError(
+                "latent_samples second dimension must match number of test points: "
+                f"got {latent_samples.shape[1]} and {y_true.shape[0]}"
+            )
+
+        log_p_y = np.where(
+            y_true[None, :] == 1,
+            log_expit(latent_samples),
+            log_expit(-latent_samples),
+        )
+
+        pell_by_point = np.mean(log_p_y, axis=0)
+        pell = float(np.sum(pell_by_point))
+        pell_mean = float(np.mean(pell_by_point))
+        metrics["pell"] = pell
+        metrics["pell_mean"] = pell_mean
+        metrics["posterior_expected_log_loss"] = float(-pell_mean)
+
     return metrics
 
 
