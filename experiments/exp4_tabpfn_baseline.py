@@ -7,7 +7,7 @@ managed service, so this script authenticates with an access token and does
 not load local TabPFN model weights.
 
 TabPFN works best on datasets with up to ~50k samples. For larger training
-sets the script subsamples to --max-train-samples (default 50000). The hosted
+sets the script subsamples to --max-train-samples (default 3500). The hosted
 client also has request-size limits, so this script applies an additional
 feature-dimension-based cap when needed.
 
@@ -396,7 +396,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", type=str, required=True, choices=["pcam", "camelyon17", "embed"])
     parser.add_argument("--embedding-dir", type=str, default="data/embeddings")
     parser.add_argument("--output-dir", type=str, default="data")
-    parser.add_argument("--max-train-samples", type=int, default=50000,
+    parser.add_argument("--max-train-samples", type=int, default=3500,
                         help="Subsample train set to this size before TabPFN client fit")
     parser.add_argument("--predict-chunk-size", type=int, default=1000,
                         help="Chunk size for batched predict_proba calls")
