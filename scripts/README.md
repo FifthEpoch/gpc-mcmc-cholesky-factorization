@@ -26,7 +26,7 @@ NETID=ab1234 bash scripts/setup_env.sh
 
 This creates a conda env at `/scratch/<NETID>/conda-envs/gpc` with Python 3.12
 and installs all project dependencies from `requirements.txt` (numpy, scipy,
-scikit-learn, torch, torchvision, h5py, tabpfn, etc.).
+scikit-learn, torch, torchvision, h5py, tabpfn-client, etc.).
 
 To also install WILDS dataset download dependencies:
 
@@ -128,9 +128,9 @@ sbatch --account=torch_pr_xxx_yyy \
 
 ### Experiment 4: TabPFN Tabular Model Baseline
 
-Runs TabPFN on the same frozen embeddings produced by Experiment 3. **You must
-run Experiment 3 first** (or at least the embedding extraction step) so that
-`data/embeddings/` is populated.
+Runs TabPFN through the Prior Labs `tabpfn-client` API on the same frozen
+embeddings produced by Experiment 3. **You must run Experiment 3 first** (or at
+least the embedding extraction step) so that `data/embeddings/` is populated.
 
 ```bash
 sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
@@ -143,7 +143,7 @@ sbatch --account=torch_pr_xxx_yyy --export=ALL,NETID=ab1234,DATASET=pcam \
 | `DATASET`            | `pcam`         | `pcam`, `camelyon17`, or `embed`                  |
 | `MAX_TRAIN_SAMPLES`  | `50000`        | Subsample training set to this size for TabPFN    |
 | `EMBEDDING_DIR`      | `data/embeddings` | Embedding root (project format or partner HG layout) |
-| `TABPFN_TOKEN`       | unset          | Prior Labs API token for headless cluster auth    |
+| `TABPFN_TOKEN`       | unset          | Prior Labs API token for `tabpfn-client` auth     |
 | `TABPFN_TOKEN_FILE`  | unset          | Path to file containing token; safer than inline token |
 | `CONDA_ENV`          | auto-detected  | Override conda env path                           |
 | `PROJECT_ROOT`       | auto-detected  | Override project directory                        |
@@ -169,6 +169,11 @@ printf '%s\n' '<your-prior-labs-token>' > /scratch/ab1234/tabpfn_token.txt
 chmod 600 /scratch/ab1234/tabpfn_token.txt
 sbatch --account=torch_pr_xxx_yyy \
        --export=ALL,NETID=ab1234,DATASET=pcam,TABPFN_TOKEN_FILE=/scratch/ab1234/tabpfn_token.txt \
+       scripts/exp4_tabpfn_baseline.sbatch
+
+# Inline token option (works, but less safe because it may end up in shell history)
+sbatch --account=torch_pr_xxx_yyy \
+       --export=ALL,NETID=ab1234,DATASET=pcam,TABPFN_TOKEN='<your-token>' \
        scripts/exp4_tabpfn_baseline.sbatch
 ```
 
@@ -250,7 +255,7 @@ srun --jobid=<JOBID> nvidia-smi
 | `Conda env not found`                    | Env not created yet                        | Run `NETID=... bash scripts/setup_env.sh` first      |
 | `CUDA out of memory`                     | Batch size too large for GPU               | Reduce `--batch-size` in the Python script           |
 | `Permission denied` on `/home`           | Cache writing to home dir                  | Verify `set_scratch_env.sh` is sourced               |
-| `TabPFN import failed`                   | `tabpfn` not installed                     | Run `pip install tabpfn` in the conda env            |
+| `TabPFN import failed`                   | `tabpfn-client` not installed              | Run `pip install tabpfn-client` in the conda env     |
 
 ---
 
