@@ -480,6 +480,7 @@ def evaluate_loader(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
+    desc: str = "Eval",
 ) -> tuple[dict[str, float | None], np.ndarray, np.ndarray, list[dict[str, Any]]]:
     model.eval()
     total_loss = 0.0
@@ -488,8 +489,9 @@ def evaluate_loader(
     all_probs: list[np.ndarray] = []
     predictions: list[dict[str, Any]] = []
 
+    progress = tqdm(loader, desc=desc, leave=False)
     with torch.no_grad():
-        for images, labels, image_rels, sources in loader:
+        for images, labels, image_rels, sources in progress:
             images = images.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
 
@@ -514,6 +516,10 @@ def evaluate_loader(
                     "probability": float(prob),
                     "prediction": int(prob >= 0.5),
                 })
+
+            progress.set_postfix(
+                avg_loss=f"{total_loss / max(total_examples, 1):.4f}"
+            )
 
     labels_np = np.concatenate(all_labels)
     probs_np = np.concatenate(all_probs)
@@ -578,7 +584,7 @@ def evaluate_split(
 
     infer_start = perf_counter()
     eval_metrics, y_true, y_prob, predictions = evaluate_loader(
-        model, loader, criterion, device
+        model, loader, criterion, device, desc=f"Test {title_label}"
     )
     inference_time = perf_counter() - infer_start
 
@@ -593,6 +599,7 @@ def evaluate_split(
     metrics["sensitivity"] = metrics.get("sensitivity_TPR")
     metrics["positive_rate"] = eval_metrics["positive_rate"]
     metrics["target_positive_rate"] = eval_metrics["target_positive_rate"]
+    metrics["negative_log_loss"] = metrics.get("negative_log_likelihood_mean")
     metrics["timing_scope"] = "data_loading, training, test_inference, evaluation_plots"
     metrics["data_loading_time_sec"] = round(timing_ctx["data_loading_time_sec"], 3)
     metrics["train_time_sec"] = round(timing_ctx["train_time_sec"], 3)
@@ -648,6 +655,7 @@ def evaluate_split(
                 f"test_{label}/auprc": metrics["auprc"],
                 f"test_{label}/brier": metrics["brier"],
                 f"test_{label}/ece": metrics["ece"],
+                f"test_{label}/negative_log_loss": metrics["negative_log_loss"],
                 f"test_{label}/precision": metrics["precision"],
                 f"test_{label}/recall": metrics["recall"],
                 f"test_{label}/sensitivity_TPR": metrics["sensitivity_TPR"],
@@ -753,15 +761,32 @@ def run_experiment(args: argparse.Namespace, device: torch.device) -> None:
     best_checkpoint_path = output_dir / "best_model.pt"
 
     train_phase_start = perf_counter()
-    for epoch in range(1, args.epochs + 1):
+    epoch_bar = tqdm(
+        range(1, args.epochs + 1),
+        desc="Training",
+        unit="epoch",
+        total=args.epochs,
+    )
+    for epoch in epoch_bar:
         epoch_start = perf_counter()
         train_metrics = train_one_epoch(
             model, train_loader, criterion, optimizer, device,
             epoch=epoch, total_epochs=args.epochs,
         )
-        valid_metrics, _, _, _ = evaluate_loader(model, valid_loader, criterion, device)
+        valid_metrics, _, _, _ = evaluate_loader(
+            model, valid_loader, criterion, device,
+            desc=f"Valid {epoch}/{args.epochs}",
+        )
         epoch_time = perf_counter() - epoch_start
         epochs_ran = epoch
+        epoch_bar.set_postfix(
+            train_loss=f"{train_metrics['loss']:.4f}",
+            valid_loss=f"{valid_metrics['loss']:.4f}",
+            valid_auroc=(
+                f"{valid_metrics['auroc']:.4f}"
+                if valid_metrics["auroc"] is not None else "n/a"
+            ),
+        )
 
         history.append({
             "epoch": epoch,
