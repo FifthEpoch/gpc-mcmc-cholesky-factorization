@@ -18,18 +18,6 @@ export PYTHONNOUSERSITE=1
 # By default, if datasets/<dataset>-hg exists, use that embedding root and
 # therefore prefer projected_512.npy when available.
 #
-# Optional overrides:
-#   DATASET              pcam | camelyon17 | embed     (default: pcam)
-#   MAX_TRAIN_SAMPLES    int                           (default: 50000)
-#   EMBEDDING_DIR        path to embedding root         (default: data/embeddings)
-#   TABPFN_TOKEN         Prior Labs API token           (optional)
-#   TABPFN_TOKEN_FILE    file containing token          (optional, safer)
-#   CONDA_ENV            /path/to/env                  (auto-detected)
-#   PROJECT_ROOT         /path/to/project              (auto-detected)
-
-NETID="${NETID:-<netid>}"
-if [ "${NETID}" = "<netid>" ]; then
-  echo "ERROR: NETID is required. Submit with --export=ALL,NETID=<your-netid>." >&2
 # Example:
 #   sbatch --export=ALL,DATASET=pcam scripts/exp4_tabpfn_baseline.sbatch
 
@@ -62,8 +50,6 @@ EMBEDDING_DIR="${EMBEDDING_DIR:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-data}"
 DEVICE="${DEVICE:-cuda}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-50000}"
-EMBEDDING_DIR="${EMBEDDING_DIR:-data/embeddings}"
-TABPFN_TOKEN_FILE="${TABPFN_TOKEN_FILE:-}"
 PREDICT_CHUNK_SIZE="${PREDICT_CHUNK_SIZE:-1000}"
 SEED="${SEED:-42}"
 
@@ -122,28 +108,6 @@ export TABPFN_TOKEN="${TABPFN_TOKEN:-}"
 #   chmod 600 /scratch/${NETID}/.tabpfn_token
 #   export TABPFN_TOKEN_FILE=/scratch/${NETID}/.tabpfn_token
 export TABPFN_TOKEN_FILE="${TABPFN_TOKEN_FILE:-}"
-
-# =============================================================================
-# TabPFN authentication for headless cluster jobs
-# =============================================================================
-# Prefer TABPFN_TOKEN_FILE so the token does not appear in shell history or Slurm
-# accounting output. If TABPFN_TOKEN is already exported, this block preserves it.
-if [ -n "${TABPFN_TOKEN_FILE}" ]; then
-  if [ ! -r "${TABPFN_TOKEN_FILE}" ]; then
-    echo "ERROR: TABPFN_TOKEN_FILE is not readable: ${TABPFN_TOKEN_FILE}" >&2
-    exit 1
-  fi
-  export TABPFN_TOKEN="$(tr -d '\r\n' < "${TABPFN_TOKEN_FILE}")"
-fi
-
-if [ -n "${TABPFN_TOKEN:-}" ]; then
-  echo "TabPFN token provided via environment."
-else
-  echo "WARN: TABPFN_TOKEN is not set. TabPFN may fail if model license authentication is required." >&2
-fi
-
-# Avoid browser-login attempts on compute nodes.
-export TABPFN_NO_BROWSER="${TABPFN_NO_BROWSER:-1}"
 
 PYTHON="${CONDA_PREFIX}/bin/python"
 if [ ! -x "${PYTHON}" ]; then

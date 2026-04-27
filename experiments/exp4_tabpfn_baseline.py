@@ -1,13 +1,15 @@
 """
 Experiment 4: TabPFN tabular foundation model baseline.
 
-Uses TabPFN (Hollmann et al., 2025) as a classifier on the same frozen
-embeddings produced by extract_embeddings.py.  TabPFN is a pre-trained
-transformer for tabular data that requires no gradient-based training --
-it fits via in-context learning in a single forward pass.
+Uses the hosted Prior Labs TabPFN client as a classifier on the same frozen
+embeddings produced by extract_embeddings.py. The client talks to Prior Labs'
+managed service, so this script authenticates with an access token and does
+not load local TabPFN model weights.
 
-TabPFN works best on datasets with up to ~50k samples.  For larger
-training sets the script subsamples to --max-train-samples (default 50000).
+TabPFN works best on datasets with up to ~50k samples. For larger training
+sets the script subsamples to --max-train-samples (default 50000). The hosted
+client also has request-size limits, so this script applies an additional
+feature-dimension-based cap when needed.
 
 Usage:
     python experiments/exp4_tabpfn_baseline.py \
@@ -15,8 +17,7 @@ Usage:
         --embedding-dir data/embeddings \
         --device cuda
 
-Gated TabPFN model weights (TabPFN 2.5+): get a token from
-https://ux.priorlabs.ai (License tab), then either:
+Get an access token from https://ux.priorlabs.ai and then either:
 
 - ``export TABPFN_TOKEN=<token>`` before running, or
 - put the token in a file (e.g. under ``/scratch``) and
@@ -24,10 +25,11 @@ https://ux.priorlabs.ai (License tab), then either:
   ``TABPFN_TOKEN`` is unset).   For local runs, copy ``.env.example`` to ``.env`` and set
   ``TABPFN_TOKEN=...``; the script loads the project
   root ``.env`` automatically (``python-dotenv``; does not override variables
-  already set in the shell). TabPFN reads other settings from the environment too.
+  already set in the shell).
 
-For clusters, set ``TABPFN_NO_BROWSER=1`` and use ``TABPFN_TOKEN`` or
-``TABPFN_TOKEN_FILE`` (do not put secrets in the job script or git).
+For clusters, use ``TABPFN_TOKEN`` or ``TABPFN_TOKEN_FILE`` (do not put secrets
+in the job script or git). As a last-resort cluster convenience, paste a token
+into ``TABPFN_TOKEN_OVERRIDE`` below on the cluster copy only.
 """
 
 from __future__ import annotations
@@ -59,24 +61,51 @@ from my_cholesky.eval_metrics import (
     plot_reliability_diagram,
 )
 
+# Optional cluster-only convenience:
+# Paste a Prior Labs API token here on the cluster copy if using TABPFN_TOKEN or
+# TABPFN_TOKEN_FILE is inconvenient. Keep this blank in git commits.
+TABPFN_TOKEN_OVERRIDE = ""
+TABPFN_CLIENT_MAX_CELLS = 20_000_000
 
-def _load_tabpfn_token_from_file() -> None:
-    """If TABPFN_TOKEN is empty, set it from the path in TABPFN_TOKEN_FILE."""
+def _load_tabpfn_token_from_file() -> str:
+    """Populate and return TABPFN_TOKEN from an override or token file."""
     if os.environ.get("TABPFN_TOKEN", "").strip():
-        return
+        return os.environ["TABPFN_TOKEN"].strip()
+
+    token_override = TABPFN_TOKEN_OVERRIDE.strip()
+    if token_override:
+        os.environ["TABPFN_TOKEN"] = token_override
+        return token_override
+
     path = (os.environ.get("TABPFN_TOKEN_FILE") or "").strip()
     if not path:
-        return
+        return ""
     token_path = Path(path).expanduser()
     if not token_path.is_file():
         print(
             f"WARN: TABPFN_TOKEN_FILE is set but not a file: {token_path}",
             file=sys.stderr,
         )
-        return
+        return ""
     token = token_path.read_text(encoding="utf-8").strip()
     if token:
         os.environ["TABPFN_TOKEN"] = token
+        return token
+    return ""
+
+
+def _configure_tabpfn_client_auth() -> None:
+    """Resolve a token and register it with tabpfn_client."""
+    token = _load_tabpfn_token_from_file()
+    if not token:
+        raise RuntimeError(
+            "TabPFN client requires TABPFN_TOKEN (or TABPFN_TOKEN_FILE / "
+            "TABPFN_TOKEN_OVERRIDE) to be set before running."
+        )
+
+    import tabpfn_client
+
+    tabpfn_client.set_access_token(token)
 
 
 def load_embeddings(
@@ -223,8 +252,8 @@ def confusion_counts_rates(
 
 
 def run_experiment(args: argparse.Namespace) -> dict:
-    _load_tabpfn_token_from_file()
-    from tabpfn import TabPFNClassifier
+    _configure_tabpfn_client_auth()
+    from tabpfn_client import TabPFNClassifier
 
     experiment_start = time()
     emb_dir = Path(args.embedding_dir)
@@ -242,19 +271,27 @@ def run_experiment(args: argparse.Namespace) -> dict:
     print(f"Dataset: {ds}")
     print(f"  train: {train_emb.shape[0]}  val: {val_emb.shape[0]}  test: {test_emb.shape[0]}")
     print(f"  feature dim: {train_emb.shape[1]}")
+    if args.device:
+        print(f"  requested device: {args.device} (ignored by tabpfn_client)")
 
-    if train_emb.shape[0] > args.max_train_samples:
-        print(f"  Subsampling train from {train_emb.shape[0]} to {args.max_train_samples}")
-        train_emb, train_lbl = subsample(
-            train_emb, train_lbl, args.max_train_samples, args.seed
+    max_train_samples = args.max_train_samples
+    api_train_cap = max(1, TABPFN_CLIENT_MAX_CELLS // max(train_emb.shape[1], 1))
+    effective_train_cap = min(max_train_samples, api_train_cap)
+    if effective_train_cap < max_train_samples:
+        print(
+            "  Reducing max train samples from "
+            f"{max_train_samples} to {effective_train_cap} to stay within the "
+            f"tabpfn_client request-size limit ({TABPFN_CLIENT_MAX_CELLS:,} cells)."
         )
 
-    clf_kwargs = dict(device=args.device, random_state=args.seed)
-    if train_emb.shape[0] > 10_000:
-        clf_kwargs["ignore_pretraining_limits"] = True
+    if train_emb.shape[0] > effective_train_cap:
+        print(f"  Subsampling train from {train_emb.shape[0]} to {effective_train_cap}")
+        train_emb, train_lbl = subsample(
+            train_emb, train_lbl, effective_train_cap, args.seed
+        )
 
     print(f"\nFitting TabPFN on {train_emb.shape[0]} samples ...")
-    clf = TabPFNClassifier(**clf_kwargs)
+    clf = TabPFNClassifier()
     fit_start = time()
     clf.fit(train_emb, train_lbl.astype(int))
     fit_time = time() - fit_start
@@ -273,6 +310,10 @@ def run_experiment(args: argparse.Namespace) -> dict:
     metrics["fit_time_sec"] = round(fit_time, 3)
     metrics["fit_or_train_time_sec"] = round(fit_time, 3)
     metrics["inference_time_sec"] = round(infer_time, 3)
+    metrics["tabpfn_backend"] = "tabpfn_client"
+    metrics["max_train_samples_requested"] = int(args.max_train_samples)
+    metrics["max_train_samples_effective"] = int(effective_train_cap)
+    metrics["tabpfn_client_max_cells"] = int(TABPFN_CLIENT_MAX_CELLS)
     metrics["n_train"] = int(len(train_lbl))
     metrics["n_val"] = int(len(val_lbl))
     metrics["n_test"] = int(len(test_lbl))
@@ -356,10 +397,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embedding-dir", type=str, default="data/embeddings")
     parser.add_argument("--output-dir", type=str, default="data")
     parser.add_argument("--max-train-samples", type=int, default=50000,
-                        help="Subsample train set to this size (TabPFN limit)")
+                        help="Subsample train set to this size before TabPFN client fit")
     parser.add_argument("--predict-chunk-size", type=int, default=1000,
                         help="Chunk size for batched predict_proba calls")
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="cuda",
+                        help="Retained for CLI compatibility; ignored by tabpfn_client")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
