@@ -30,9 +30,13 @@ import numpy as np
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC_PATH = os.path.join(PROJECT_ROOT, "src")
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+if SRC_PATH not in sys.path:
+    sys.path.insert(0, SRC_PATH)
 
+from my_cholesky.result_logging import append_result_rows  # noqa: E402
 from predictive_metrics import (  # noqa: E402
     evaluate_binary_probabilistic_predictions,
     print_metric_table,
@@ -351,10 +355,32 @@ def main() -> None:
         },
         allow_pickle=True,
     )
+    csv_path = append_result_rows(
+        [
+            {
+                "experiment": "exp1",
+                "script_path": "experiments/exp1_pygp_approx_gpc_embeddings.py",
+                "artifacts": json.dumps([str(metrics_path), str(results_path)]),
+                "dataset": args.dataset,
+                "seed": args.seed,
+                "method_name": method,
+                "embedding_root": args.embedding_dir,
+                "feature_dim": int(X_train.shape[1]),
+                "max_train_samples": args.max_train_samples,
+                "max_test_samples": args.max_test_samples,
+                "n_train": int(X_train.shape[0]),
+                "n_test": int(X_test.shape[0]),
+                "fit_or_train_time_sec": all_metrics[method].get("fit_time_sec", ""),
+                **all_metrics[method],
+            }
+            for method in methods
+        ]
+    )
 
     print("Saved:")
     print(f"- {metrics_path}")
     print(f"- {results_path}")
+    print(f"- appended CSV metrics to {csv_path}")
     print("Skipped 2D contour plot because embedding features are not 2-dimensional.")
 
 

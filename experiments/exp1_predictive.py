@@ -11,6 +11,7 @@ Structure:
 4) estimate predictive probability by averaging sigmoid outputs.
 """
 
+import json
 import os
 import sys
 import time
@@ -31,6 +32,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from my_cholesky.kernels import GaussianKernel_mtx
+from my_cholesky.result_logging import append_result_row
 from predictive_metrics import (
     evaluate_binary_probabilistic_predictions,
     print_metric_table,
@@ -449,6 +451,7 @@ def main():
         p_pred=predictive_prob,
         threshold=0.5,
         n_bins=15,
+        p_samples=p_test_samples,
     )
     print_metric_table(test_metrics, title="HMC GP test metrics")
 
@@ -561,6 +564,22 @@ def main():
     print("HMC predictive computation completed.")
     print(f"Saved predictive plot to: {plot_path}")
     print(f"Saved predictive results to: {results_path}")
+    csv_path = append_result_row(
+        {
+            "experiment": "exp1",
+            "script_path": "experiments/exp1_predictive.py",
+            "artifacts": json.dumps([plot_path, results_path]),
+            "dataset": "synthetic_two_blob",
+            "data_seed": 42,
+            "sampler": "hmc",
+            "n_train": int(len(y_train)),
+            "n_test": int(len(y_test)),
+            "accept_rate": hmc_stats["accept_rate"],
+            "tau": tau_logp,
+            **test_metrics,
+        }
+    )
+    print(f"Appended CSV metrics to {csv_path}")
 
 
 if __name__ == "__main__":

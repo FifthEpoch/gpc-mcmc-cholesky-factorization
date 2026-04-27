@@ -16,6 +16,7 @@ from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
     brier_score_loss,
+    log_loss,
     roc_auc_score,
 )
 
@@ -69,12 +70,31 @@ def compute_classification_report(
     """
     y_pred = (y_prob >= threshold).astype(int)
     tp = int(np.sum((y_pred == 1) & (y_true == 1)))
+    tn = int(np.sum((y_pred == 0) & (y_true == 0)))
+    fp = int(np.sum((y_pred == 1) & (y_true == 0)))
     fn = int(np.sum((y_pred == 0) & (y_true == 1)))
     sensitivity = tp / max(tp + fn, 1)
+    specificity = tn / max(tn + fp, 1)
     return {
         "accuracy": float(accuracy_score(y_true, y_pred)),
+        "number_errors": int(fp + fn),
         "sensitivity": sensitivity,
+        "sensitivity_TPR": sensitivity,
+        "sensitivity_tpr": sensitivity,
+        "specificity_TNR": specificity,
+        "specificity_tnr": specificity,
         "false_negative_rate": 1.0 - sensitivity,
+        "FNR": 1.0 - sensitivity,
+        "false_positive_rate": 1.0 - specificity,
+        "FPR": 1.0 - specificity,
+        "TP": tp,
+        "TN": tn,
+        "FP": fp,
+        "FN": fn,
+        "tp": tp,
+        "tn": tn,
+        "fp": fp,
+        "fn": fn,
     }
 
 
@@ -85,11 +105,35 @@ def compute_all_metrics(
     n_bins: int = 15,
 ) -> Dict[str, float]:
     """Convenience wrapper that returns every metric in a single dict."""
+    try:
+        from predictive_metrics import evaluate_binary_probabilistic_predictions
+
+        return evaluate_binary_probabilistic_predictions(
+            y_true=y_true,
+            p_pred=y_prob,
+            threshold=threshold,
+            n_bins=n_bins,
+        )
+    except Exception:
+        pass
+
+    y_true = np.asarray(y_true).astype(int)
+    y_prob = np.clip(np.asarray(y_prob).astype(float), 1e-12, 1.0 - 1e-12)
+    log_pred_prob_i = y_true * np.log(y_prob) + (1 - y_true) * np.log(1.0 - y_prob)
+    elpd = float(np.sum(log_pred_prob_i))
+    elpd_mean = float(np.mean(log_pred_prob_i))
     metrics = {
         "auroc": compute_auroc(y_true, y_prob),
         "auprc": compute_auprc(y_true, y_prob),
         "brier": compute_brier(y_true, y_prob),
         "ece": compute_ece(y_true, y_prob, n_bins=n_bins),
+        "elpd": elpd,
+        "elpd_mean": elpd_mean,
+        "pell": float("nan"),
+        "pell_mean": float("nan"),
+        "log_likelihood_mean": -float(log_loss(y_true, y_prob, labels=[0, 1])),
+        "negative_log_likelihood_mean": float(log_loss(y_true, y_prob, labels=[0, 1])),
+        "predictive_likelihood": float(np.exp(elpd_mean)),
     }
     metrics.update(compute_classification_report(y_true, y_prob, threshold))
     return metrics

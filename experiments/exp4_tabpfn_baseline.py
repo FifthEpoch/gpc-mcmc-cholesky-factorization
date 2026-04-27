@@ -53,13 +53,14 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Load .env from project root (gitignored). Does not override existing env vars.
 load_dotenv(Path(PROJECT_ROOT) / ".env")
 SRC_PATH = os.path.join(PROJECT_ROOT, "src")
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
 
-from my_cholesky.eval_metrics import (
-    compute_all_metrics,
-    plot_reliability_diagram,
-)
+from my_cholesky.eval_metrics import plot_reliability_diagram
+from my_cholesky.result_logging import append_result_row
+from predictive_metrics import evaluate_binary_probabilistic_predictions
 
 # Optional cluster-only convenience:
 # Paste a Prior Labs API token here on the cluster copy if using TABPFN_TOKEN or
@@ -303,7 +304,9 @@ def run_experiment(args: argparse.Namespace) -> dict:
     print(f"Inference time ({len(test_lbl)} samples): {infer_time:.2f}s")
 
     evaluation_start = time()
-    metrics = compute_all_metrics(test_lbl, test_probs, threshold=0.5, n_bins=15)
+    metrics = evaluate_binary_probabilistic_predictions(
+        test_lbl, test_probs, threshold=0.5, n_bins=15
+    )
     metrics.update(confusion_counts_rates(test_lbl, test_probs, threshold=0.5))
     metrics["timing_scope"] = "data_loading, tabpfn_fit, test_inference, evaluation_plots"
     metrics["data_loading_time_sec"] = round(data_loading_time, 3)
@@ -370,7 +373,7 @@ def run_experiment(args: argparse.Namespace) -> dict:
                 mask = hospitals == h_id
                 if np.sum(mask) < 10 or len(np.unique(test_lbl[mask])) < 2:
                     continue
-                h_metrics = compute_all_metrics(test_lbl[mask], test_probs[mask])
+                h_metrics = evaluate_binary_probabilistic_predictions(test_lbl[mask], test_probs[mask])
                 per_hospital[int(h_id)] = h_metrics
                 print(f"  Hospital {int(h_id)}: AUROC={h_metrics['auroc']:.4f}  FNR={h_metrics['false_negative_rate']:.4f}")
             ph_path = out_dir / f"exp4_{ds}_per_hospital.json"
@@ -387,6 +390,24 @@ def run_experiment(args: argparse.Namespace) -> dict:
     with open(results_path, "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"Updated timing fields in: {results_path}")
+    csv_path = append_result_row(
+        {
+            "experiment": "exp4",
+            "script_path": "experiments/exp4_tabpfn_baseline.py",
+            "artifacts": json.dumps([str(results_path), str(cal_path), str(roc_path)]),
+            "dataset": ds,
+            "seed": args.seed,
+            "method_name": "tabpfn_client",
+            "embedding_root": str(emb_dir),
+            "feature_dim": int(train_emb.shape[1]),
+            "threshold": 0.5,
+            "max_train_samples": int(args.max_train_samples),
+            "predict_chunk_size": int(args.predict_chunk_size),
+            "device": str(args.device),
+            **metrics,
+        }
+    )
+    print(f"Appended CSV metrics to {csv_path}")
 
     return metrics
 

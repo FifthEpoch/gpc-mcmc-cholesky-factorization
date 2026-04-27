@@ -34,14 +34,14 @@ from torch.utils.data import DataLoader, TensorDataset
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_PATH = os.path.join(PROJECT_ROOT, "src")
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
 
-from my_cholesky.eval_metrics import (
-    compute_all_metrics,
-    compute_auroc,
-    plot_reliability_diagram,
-)
+from my_cholesky.eval_metrics import compute_auroc, plot_reliability_diagram
+from my_cholesky.result_logging import append_result_row
+from predictive_metrics import evaluate_binary_probabilistic_predictions
 
 HG_DATASET_ROOTS = {
     "pcam": "pcam-hg",
@@ -382,7 +382,9 @@ def run_experiment(args: argparse.Namespace) -> dict:
     infer_time = perf_counter() - infer_start
 
     evaluation_start = perf_counter()
-    metrics = compute_all_metrics(test_lbl, test_probs, threshold=0.5, n_bins=15)
+    metrics = evaluate_binary_probabilistic_predictions(
+        test_lbl, test_probs, threshold=0.5, n_bins=15
+    )
     metrics.update(confusion_counts_rates(test_lbl, test_probs, threshold=0.5))
     metrics["timing_scope"] = "data_loading, training, test_inference, evaluation_plots"
     metrics["data_loading_time_sec"] = round(data_loading_time, 3)
@@ -452,7 +454,7 @@ def run_experiment(args: argparse.Namespace) -> dict:
                 mask = hospitals == h_id
                 if np.sum(mask) < 10 or len(np.unique(test_lbl[mask])) < 2:
                     continue
-                h_metrics = compute_all_metrics(test_lbl[mask], test_probs[mask])
+                h_metrics = evaluate_binary_probabilistic_predictions(test_lbl[mask], test_probs[mask])
                 per_hospital[int(h_id)] = h_metrics
                 print(f"  Hospital {int(h_id)}: AUROC={h_metrics['auroc']:.4f}  FNR={h_metrics['false_negative_rate']:.4f}")
             ph_path = out_dir / f"exp3_{ds}_per_hospital.json"
@@ -476,6 +478,36 @@ def run_experiment(args: argparse.Namespace) -> dict:
     with open(results_path, "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"\nSaved: {results_path}")
+    csv_path = append_result_row(
+        {
+            "experiment": "exp3",
+            "script_path": "experiments/exp3_nn_baseline.py",
+            "artifacts": json.dumps([str(results_path), str(cal_path), str(roc_path)]),
+            "dataset": ds,
+            "seed": args.seed,
+            "method_name": args.model_arch,
+            "model_architecture": args.model_arch,
+            "embedding_root": str(emb_dir),
+            "feature_dim": int(input_dim),
+            "threshold": 0.5,
+            "epochs": int(args.epochs),
+            "patience": int(args.patience),
+            "batch_size": int(args.batch_size),
+            "lr": float(args.lr),
+            "learning_rate": float(args.lr),
+            "weight_decay": float(args.weight_decay),
+            "hidden_dim": metrics["hidden_dim"],
+            "num_layers": metrics["num_layers"],
+            "dropout": metrics["dropout"],
+            "trainable_parameters": int(n_parameters),
+            "device": str(device),
+            "n_train": int(len(train_lbl)),
+            "n_val": int(len(val_lbl)),
+            "n_test": int(len(test_lbl)),
+            **metrics,
+        }
+    )
+    print(f"Appended CSV metrics to {csv_path}")
     print(f"Experiment end time:   {experiment_end.isoformat(timespec='seconds')}")
     print(f"Total runtime:         {total_runtime:.2f}s")
 

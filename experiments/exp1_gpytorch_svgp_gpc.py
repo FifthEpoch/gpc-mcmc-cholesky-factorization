@@ -52,6 +52,7 @@ from predictive_metrics import (
     print_posterior_statistics,
 )
 from my_cholesky.eval_metrics import plot_reliability_diagram
+from my_cholesky.result_logging import append_result_row
 
 
 def _import_torch_stack():
@@ -612,6 +613,32 @@ def main() -> None:
     fig2.savefig(roc_path, dpi=160)
     plt.close(fig2)
     print(f"Saved: {roc_path}")
+    csv_path = append_result_row(
+        {
+            "experiment": "exp1",
+            "script_path": "experiments/exp1_gpytorch_svgp_gpc.py",
+            "artifacts": json.dumps([str(results_json), str(results_npz), str(cal_path), str(roc_path)]),
+            "dataset": ds,
+            "seed": args.seed,
+            "method_name": "gpytorch_svgp",
+            "embedding_root": str(emb_dir),
+            "feature_dim": int(input_dim),
+            "num_inducing": int(num_inducing),
+            "batch_size": int(args.batch_size),
+            "learning_rate": float(args.learning_rate),
+            "epochs": int(args.epochs),
+            "patience": int(args.patience),
+            "max_train_samples": int(args.max_train_samples),
+            "max_valid_samples": int(args.max_val_samples),
+            "max_test_samples": int(args.max_test_samples),
+            "device": str(device),
+            "fit_or_train_time_sec": train_time,
+            "inference_time_sec": infer_time,
+            "total_pipeline_time_sec": total_runtime,
+            **metrics,
+        }
+    )
+    print(f"Appended CSV metrics to {csv_path}")
 
     print(f"Experiment end time:   {experiment_end.isoformat(timespec='seconds')}")
     print(f"Total runtime:         {total_runtime:.2f}s")

@@ -34,6 +34,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from my_cholesky.kernels import GaussianKernel_mtx
+from my_cholesky.result_logging import append_result_row
 from predictive_metrics import (
     evaluate_binary_probabilistic_predictions,
     print_metric_table,
@@ -504,6 +505,7 @@ def main():
         p_pred=predictive_prob,
         threshold=0.5,
         n_bins=15,
+        p_samples=pred_test["p_samples"],
     )
     print_metric_table(test_metrics, title="Exp2 low-rank HMC GP test metrics")
     evaluation_time = time.perf_counter() - evaluation_start
@@ -554,6 +556,39 @@ def main():
 
     print(f"Total wall-clock time: {total_wall:.2f}s")
     print(f"Saved results to {output_path}")
+    csv_path = append_result_row(
+        {
+            "experiment": "exp2",
+            "script_path": "experiments/exp2_rose.py",
+            "artifacts": str(output_path),
+            "dataset": Path(args.test_embeddings).stem,
+            "seed": args.seed,
+            "k": args.k,
+            "kernel": "gaussian",
+            "kernel_bandwidth": bandwidth,
+            "n_train": n_train,
+            "n_test": n_test,
+            "n_samples": args.n_samples,
+            "n_warmup": args.n_warmup,
+            "n_leapfrog": args.n_leapfrog,
+            "sampler": "hmc",
+            "timing_scope": "precomputed_factor_load, hmc_warmup, hmc_sampling, predictive_sampling, evaluation",
+            "data_loading_time_sec": data_loading_time,
+            "factor_time_sec": 0.0,
+            "warmup_time_sec": hmc_stats["warmup_time"],
+            "sampling_time_sec": hmc_stats["sampling_time"],
+            "per_step_time_sec": hmc_stats["per_step_time"],
+            "total_mcmc_time_sec": hmc_stats["total_mcmc_time"],
+            "inference_time_sec": inference_time,
+            "evaluation_time_sec": evaluation_time,
+            "total_pipeline_time_sec": total_wall,
+            "accept_rate": hmc_stats["accept_rate"],
+            "final_step_size": hmc_stats["step_size"],
+            "tau": tau_logp,
+            **test_metrics,
+        }
+    )
+    print(f"Appended CSV metrics to {csv_path}")
 
 
 if __name__ == "__main__":
