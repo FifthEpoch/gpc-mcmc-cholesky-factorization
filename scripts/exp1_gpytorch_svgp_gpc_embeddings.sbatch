@@ -8,7 +8,6 @@
 #SBATCH --time=08:00:00
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
-#SBATCH --gres=gpu:h200:1
 #SBATCH --output=slurm_logs/exp1_gpytorch_svgp/%x_%j.out
 #SBATCH --error=slurm_logs/exp1_gpytorch_svgp/%x_%j.err
 
@@ -63,42 +62,11 @@ if [ -z "${NETID}" ] && [ -n "${USER:-}" ]; then
 fi
 if [ -z "${NETID}" ]; then
   echo "ERROR: Could not infer NETID. Submit with --export=ALL,NETID=<your-netid>." >&2
-# Submit with:
-#   sbatch --export=ALL,NETID=sd6701 scripts/exp1_gpytorch_svgp_gpc_embeddings.sbatch
-#
-# Optional overrides:
-#   PROJECT_ROOT    /path/to/project            (default: /scratch/${NETID}/gpc-mcmc-cholesky-factorization)
-#   CONDA_ENV       /path/to/conda/env          (default: /scratch/${NETID}/conda-envs/gpc)
-#   DATASET_ROOT    datasets/pcam-hg
-#   EMBEDDING_FILE  projected_512.npy
-#   LABEL_FILE      empty means auto-detect
-#   OUTPUT_DIR      data
-#   OUTPUT_NAME     exp1_gpytorch_svgp_pcam_results.npz
-#   NUM_INDUCING    512
-#   BATCH_SIZE      1024
-#   NUM_EPOCHS      50
-#   LEARNING_RATE   0.01
-#   MAX_TRAIN       empty means full train split
-#   MAX_VALID       empty means full valid split
-#   MAX_TEST        empty means full test split
-#   SEED            42
-#   N_BINS          15
-#   THRESHOLD       0.5
-#   NUM_WORKERS     0
-#   NO_CUDA         1 to force CPU
-#   SAVE_MODEL      1 to also save the model .pt
-
-NETID="${NETID:-<netid>}"
-if [ "${NETID}" = "<netid>" ]; then
-  echo "ERROR: NETID is required. Submit with --export=ALL,NETID=<your-netid>." >&2
   exit 1
 fi
 
 SCRATCH_BASE="/scratch/${NETID}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
-PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
-CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
-
 DATASET_ROOT="${DATASET_ROOT:-datasets/pcam-hg}"
 EMBEDDING_FILE="${EMBEDDING_FILE:-projected_512.npy}"
 LABEL_FILE="${LABEL_FILE:-}"
@@ -146,18 +114,6 @@ load_conda() {
 }
 
 load_conda
-SCRIPT_DIR="${PROJECT_ROOT}/scripts"
-if [ -f "${SCRIPT_DIR}/set_scratch_env.sh" ]; then
-  # shellcheck disable=SC1091
-  source "${SCRIPT_DIR}/set_scratch_env.sh"
-else
-  echo "WARN: set_scratch_env.sh not found, continuing without it." >&2
-fi
-
-module purge
-module load anaconda3/2025.06
-# shellcheck disable=SC1091
-source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
 
 export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
 set +u
@@ -185,17 +141,6 @@ mkdir -p "${MPLCONFIGDIR}"
 PYTHON="${CONDA_PREFIX}/bin/python"
 if [ ! -x "${PYTHON}" ]; then
   echo "ERROR: Python not found at ${PYTHON}" >&2
-  exit 1
-fi
-
-cd "${PROJECT_ROOT}"
-mkdir -p slurm_logs/exp1_gpytorch_svgp
-mkdir -p "${OUTPUT_DIR}"
-mkdir -p "${MPLCONFIGDIR}"
-
-if [ ! -f "experiments/exp1_gpytorch_svgp_gpc_embeddings.py" ]; then
-  echo "ERROR: experiments/exp1_gpytorch_svgp_gpc_embeddings.py not found under ${PROJECT_ROOT}" >&2
-  echo "This sbatch exists, but the embedding experiment script must also be present on this branch." >&2
   exit 1
 fi
 
