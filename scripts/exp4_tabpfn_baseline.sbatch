@@ -1,4 +1,4 @@
-#!/bin/bash
+e#!/bin/bash
 #SBATCH --job-name=exp4_tabpfn
 #SBATCH --account=csci_ga_2565-2026sp
 #SBATCH --partition=c12m85-a100-1
@@ -18,27 +18,8 @@ export PYTHONNOUSERSITE=1
 # By default, if datasets/<dataset>-hg exists, use that embedding root and
 # therefore prefer projected_512.npy when available.
 #
-# Optional overrides:
-#   DATASET              pcam | camelyon17 | embed    (default: pcam)
-#   MAX_TRAIN_SAMPLES    int                          (default: 50000)
-#   EMBEDDING_DIR        path to embedding root       (default: HG root when present)
-#   TABPFN_TOKEN         Prior Labs API token         (optional)
-#   TABPFN_TOKEN_FILE    file containing token        (optional, safer)
-#   CONDA_ENV            /path/to/env                 (auto-detected)
-#   PROJECT_ROOT         /path/to/project             (auto-detected)
-#   ENV_FILE             /path/to/.env                (optional)
-#
-# Preferred safer auth:
-#   printf '%s\n' '<your-prior-labs-token>' > /scratch/ab1234/tabpfn_token.txt
-#   chmod 600 /scratch/ab1234/tabpfn_token.txt
-#   sbatch --account=torch_pr_xxx_yyy \
-#          --export=ALL,NETID=ab1234,DATASET=pcam,CONDA_ENV=/scratch/ab1234/conda-envs/gpc,TABPFN_TOKEN_FILE=/scratch/ab1234/tabpfn_token.txt \
-#          scripts/exp4_tabpfn_baseline.sbatch
-#
-# Inline option, less safe because it may end up in shell history:
-#   sbatch --account=torch_pr_xxx_yyy \
-#          --export=ALL,NETID=ab1234,DATASET=pcam,CONDA_ENV=/scratch/ab1234/conda-envs/gpc,TABPFN_TOKEN='<your-token>' \
-#          scripts/exp4_tabpfn_baseline.sbatch
+# Example:
+#   sbatch --export=ALL,DATASET=pcam scripts/exp4_tabpfn_baseline.sbatch
 
 SBATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$(cd "${SBATCH_DIR}/.." && pwd)}}"
@@ -69,7 +50,6 @@ EMBEDDING_DIR="${EMBEDDING_DIR:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-data}"
 DEVICE="${DEVICE:-cuda}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-50000}"
-TABPFN_TOKEN_FILE="${TABPFN_TOKEN_FILE:-}"
 PREDICT_CHUNK_SIZE="${PREDICT_CHUNK_SIZE:-1000}"
 SEED="${SEED:-42}"
 
@@ -129,28 +109,6 @@ export TABPFN_TOKEN="${TABPFN_TOKEN:-}"
 #   export TABPFN_TOKEN_FILE=/scratch/${NETID}/.tabpfn_token
 export TABPFN_TOKEN_FILE="${TABPFN_TOKEN_FILE:-}"
 
-# =============================================================================
-# TabPFN authentication for headless cluster jobs
-# =============================================================================
-# Prefer TABPFN_TOKEN_FILE so the token does not appear in shell history or Slurm
-# accounting output. If TABPFN_TOKEN is already exported, this block preserves it.
-if [ -n "${TABPFN_TOKEN_FILE}" ]; then
-  if [ ! -r "${TABPFN_TOKEN_FILE}" ]; then
-    echo "ERROR: TABPFN_TOKEN_FILE is not readable: ${TABPFN_TOKEN_FILE}" >&2
-    exit 1
-  fi
-  export TABPFN_TOKEN="$(tr -d '\r\n' < "${TABPFN_TOKEN_FILE}")"
-fi
-
-if [ -n "${TABPFN_TOKEN:-}" ]; then
-  echo "TabPFN token provided via environment."
-else
-  echo "WARN: TABPFN_TOKEN is not set. TabPFN may fail if model license authentication is required." >&2
-fi
-
-# Avoid browser-login attempts on compute nodes.
-export TABPFN_NO_BROWSER="${TABPFN_NO_BROWSER:-1}"
-
 PYTHON="${CONDA_PREFIX}/bin/python"
 if [ ! -x "${PYTHON}" ]; then
   echo "ERROR: Python not found at ${PYTHON}" >&2
@@ -160,11 +118,6 @@ fi
 "${PYTHON}" -c "import dotenv; print('python-dotenv imported OK')" >/dev/null 2>&1 || {
   echo "Installing missing python-dotenv into ${CONDA_ENV} ..."
   "${PYTHON}" -m pip install --no-cache-dir python-dotenv
-}
-
-"${PYTHON}" -c "import tabpfn_client; print('tabpfn-client imported OK')" >/dev/null 2>&1 || {
-  echo "Installing missing tabpfn-client into ${CONDA_ENV} ..."
-  "${PYTHON}" -m pip install --no-cache-dir tabpfn-client
 }
 
 hg_dataset_root_name() {
@@ -186,7 +139,6 @@ fi
 
 cd "${PROJECT_ROOT}"
 mkdir -p slurm_logs
-mkdir -p slurm_logs/tabpfn_ting
 mkdir -p "${OUTPUT_DIR}"
 
 if [ ! -f "experiments/exp4_tabpfn_baseline.py" ]; then
@@ -194,8 +146,8 @@ if [ ! -f "experiments/exp4_tabpfn_baseline.py" ]; then
   exit 1
 fi
 
-"${PYTHON}" -c "import tabpfn_client; print('tabpfn-client imported OK')" || {
-  echo "ERROR: tabpfn-client import check failed. Install it in ${CONDA_ENV}." >&2
+"${PYTHON}" -c "import tabpfn; print('TabPFN imported OK')" || {
+  echo "ERROR: TabPFN import check failed. Install it in ${CONDA_ENV}." >&2
   exit 1
 }
 
