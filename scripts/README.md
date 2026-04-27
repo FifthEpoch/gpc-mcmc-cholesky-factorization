@@ -170,6 +170,11 @@ chmod 600 /scratch/ab1234/tabpfn_token.txt
 sbatch --account=torch_pr_xxx_yyy \
        --export=ALL,NETID=ab1234,DATASET=pcam,TABPFN_TOKEN_FILE=/scratch/ab1234/tabpfn_token.txt \
        scripts/exp4_tabpfn_baseline.sbatch
+
+# Inline token option (works, but less safe because it may end up in shell history)
+sbatch --account=torch_pr_xxx_yyy \
+       --export=ALL,NETID=ab1234,DATASET=pcam,TABPFN_TOKEN='<your-token>' \
+       scripts/exp4_tabpfn_baseline.sbatch
 ```
 
 **Outputs:** `data/exp4_<dataset>_results.json`, `data/exp4_<dataset>_calibration.png`,
