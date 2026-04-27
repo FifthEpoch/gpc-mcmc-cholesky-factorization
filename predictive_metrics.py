@@ -1,10 +1,9 @@
 import numpy as np
-from scipy.special import log_expit, logsumexp
+from scipy.special import log_expit
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
     confusion_matrix,
-    log_loss,
     roc_auc_score,
 )
 
@@ -58,8 +57,22 @@ def evaluate_binary_probabilistic_predictions(
     specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else np.nan
     fpr = float(fp / (tn + fp)) if (tn + fp) > 0 else np.nan
 
-    nll = float(log_loss(y_true, p_pred, labels=[0, 1]))
-    log_likelihood = -nll
+    # Pointwise log predictive probabilities:
+    #
+    # log p(y_i | x_i, D)
+    # =
+    # y_i log p_i + (1 - y_i) log(1 - p_i)
+    #
+    log_pred_prob_i = (
+        y_true * np.log(p_pred)
+        + (1 - y_true) * np.log(1.0 - p_pred)
+    )
+
+    # ELPD: expected log predictive density over the dataset.
+    # For classification this is the sum of log predictive probabilities.
+    elpd = float(np.sum(log_pred_prob_i))
+    elpd_mean = float(np.mean(log_pred_prob_i))
+    nll = float(-elpd_mean)
 
     brier = float(brier_score_loss(y_true, p_pred))
     ece = expected_calibration_error(y_true, p_pred, n_bins=n_bins)
@@ -75,6 +88,13 @@ def evaluate_binary_probabilistic_predictions(
         auprc = np.nan
 
     metrics = {
+        "elpd": elpd,
+        "elpd_mean": elpd_mean,
+        "pell": np.nan,
+        "pell_mean": np.nan,
+        "negative_log_likelihood_mean": nll,
+        "posterior_expected_log_loss": np.nan,
+
         "accuracy": accuracy,
         "auroc": auroc,
         "auprc": auprc,
@@ -89,8 +109,6 @@ def evaluate_binary_probabilistic_predictions(
         "FP": int(fp),
         "TN": int(tn),
         "FN": int(fn),
-        "log_likelihood_mean": log_likelihood,
-        "negative_log_likelihood_mean": nll,
     }
 
     if latent_samples is not None:
@@ -109,17 +127,12 @@ def evaluate_binary_probabilistic_predictions(
             log_expit(-latent_samples),
         )
 
-        posterior_expected_log_likelihood = float(np.mean(log_p_y))
-        metrics["posterior_expected_log_likelihood"] = posterior_expected_log_likelihood
-        metrics["posterior_expected_nll"] = -posterior_expected_log_likelihood
-
-        # For Bernoulli classification, log E[p(y | f*)] is identical to the
-        # log-likelihood of the posterior mean probability because
-        # E[1 - p] = 1 - E[p]. The posterior-expected log-likelihood above is
-        # the genuinely different uncertainty-sensitive Jensen counterpart.
-        elpd_i = logsumexp(log_p_y, axis=0) - np.log(latent_samples.shape[0])
-        metrics["elpd_total"] = float(np.sum(elpd_i))
-        metrics["elpd_per_point"] = float(np.mean(elpd_i))
+        pell_by_point = np.mean(log_p_y, axis=0)
+        pell = float(np.sum(pell_by_point))
+        pell_mean = float(np.mean(pell_by_point))
+        metrics["pell"] = pell
+        metrics["pell_mean"] = pell_mean
+        metrics["posterior_expected_log_loss"] = float(-pell_mean)
 
     return metrics
 
@@ -161,32 +174,6 @@ def print_metric_table(metrics, title="Metrics"):
             print(f"{key:32s}: {value:.6f}")
         else:
             print(f"{key:32s}: {value}")
-
-
-def print_posterior_statistics(latent_mean, latent_var, prob_mean, prob_var=None, title="Posterior Statistics"):
-    """Print summary statistics of posterior distributions."""
-    print(f"\n{title}")
-    print("-" * len(title))
-    
-    latent_mean = np.asarray(latent_mean)
-    latent_var = np.asarray(latent_var)
-    prob_mean = np.asarray(prob_mean)
-    
-    latent_std = np.sqrt(latent_var)
-    
-    print(f"Latent function posterior:")
-    print(f"  Mean: min={np.min(latent_mean):.6f}, mean={np.mean(latent_mean):.6f}, max={np.max(latent_mean):.6f}, std={np.std(latent_mean):.6f}")
-    print(f"  Std:  min={np.min(latent_std):.6f}, mean={np.mean(latent_std):.6f}, max={np.max(latent_std):.6f}")
-    print(f"  Var:  min={np.min(latent_var):.6f}, mean={np.mean(latent_var):.6f}, max={np.max(latent_var):.6f}")
-    
-    print(f"Predictive probability posterior:")
-    print(f"  Mean: min={np.min(prob_mean):.6f}, mean={np.mean(prob_mean):.6f}, max={np.max(prob_mean):.6f}, std={np.std(prob_mean):.6f}")
-    
-    if prob_var is not None:
-        prob_var = np.asarray(prob_var)
-        prob_std = np.sqrt(prob_var)
-        print(f"  Std:  min={np.min(prob_std):.6f}, mean={np.mean(prob_std):.6f}, max={np.max(prob_std):.6f}")
-        print(f"  Var:  min={np.min(prob_var):.6f}, mean={np.mean(prob_var):.6f}, max={np.max(prob_var):.6f}")
 
 
 def compare_against_reference(reference, candidate):
