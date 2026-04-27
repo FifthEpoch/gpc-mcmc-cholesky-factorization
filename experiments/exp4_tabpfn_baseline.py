@@ -59,22 +59,21 @@ from my_cholesky.eval_metrics import (
     plot_reliability_diagram,
 )
 
-# Local-only fallback: paste a TabPFN token here if you want to run without
-# exporting TABPFN_TOKEN or using TABPFN_TOKEN_FILE. Leave empty in normal use.
+# Optional cluster-only convenience:
+# Paste a Prior Labs API token here on the cluster copy if using TABPFN_TOKEN or
+# TABPFN_TOKEN_FILE is inconvenient. Keep this blank in git commits.
 TABPFN_TOKEN_OVERRIDE = ""
 
-
-def _apply_tabpfn_token_override() -> None:
-    """Copy the in-code token override into the environment when set."""
-    token = TABPFN_TOKEN_OVERRIDE.strip()
-    if token:
-        os.environ["TABPFN_TOKEN"] = token
-
-
 def _load_tabpfn_token_from_file() -> None:
-    """If TABPFN_TOKEN is empty, set it from the path in TABPFN_TOKEN_FILE."""
+    """Populate TABPFN_TOKEN from an override or TABPFN_TOKEN_FILE if needed."""
     if os.environ.get("TABPFN_TOKEN", "").strip():
         return
+
+    token_override = TABPFN_TOKEN_OVERRIDE.strip()
+    if token_override:
+        os.environ["TABPFN_TOKEN"] = token_override
+        return
+
     path = (os.environ.get("TABPFN_TOKEN_FILE") or "").strip()
     if not path:
         return
@@ -234,7 +233,6 @@ def confusion_counts_rates(
 
 
 def run_experiment(args: argparse.Namespace) -> dict:
-    _apply_tabpfn_token_override()
     _load_tabpfn_token_from_file()
     from tabpfn import TabPFNClassifier
 
