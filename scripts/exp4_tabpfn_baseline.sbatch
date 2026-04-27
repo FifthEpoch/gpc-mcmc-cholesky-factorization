@@ -1,4 +1,4 @@
-e#!/bin/bash
+#!/bin/bash
 #SBATCH --job-name=exp4_tabpfn
 #SBATCH --account=csci_ga_2565-2026sp
 #SBATCH --partition=c12m85-a100-1
