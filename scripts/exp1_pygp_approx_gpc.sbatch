@@ -8,8 +8,8 @@
 #SBATCH --time=08:00:00
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:1
-#SBATCH --output=slurm_logs/exp1_py_gp_lp_ep/%x_%j.out
-#SBATCH --error=slurm_logs/exp1_py_gp_lp_ep/%x_%j.err
+#SBATCH --output=slurm_logs/test_exp1_py_gp_lp_ep/%x_%j.out
+#SBATCH --error=slurm_logs/test_exp1_py_gp_lp_ep/%x_%j.err
 
 set -euo pipefail
 export PYTHONNOUSERSITE=1
