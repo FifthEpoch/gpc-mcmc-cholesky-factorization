@@ -451,6 +451,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--no-cuda", action="store_true")
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument(
+        "--cholesky-jitter",
+        type=float,
+        default=1e-4,
+        help=(
+            "Jitter added by GPyTorch Cholesky routines. Increase if the "
+            "inducing-point covariance is reported as not positive definite."
+        ),
+    )
 
     parser.add_argument(
         "--save-model",
@@ -601,8 +610,9 @@ def main() -> None:
 
             optimizer.zero_grad(set_to_none=True)
 
-            output = model(xb)
-            loss = -mll(output, yb)
+            with gpytorch.settings.cholesky_jitter(args.cholesky_jitter):
+                output = model(xb)
+                loss = -mll(output, yb)
 
             loss.backward()
             optimizer.step()
@@ -626,7 +636,11 @@ def main() -> None:
         vars_ = []
         probs = []
 
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        with (
+            torch.no_grad(),
+            gpytorch.settings.fast_pred_var(),
+            gpytorch.settings.cholesky_jitter(args.cholesky_jitter),
+        ):
             for start in range(0, len(X_np), batch_size):
                 xb = torch.tensor(
                     X_np[start : start + batch_size],
