@@ -36,27 +36,55 @@ WANDB_ENTITY="${WANDB_ENTITY:-a-salt}"
 WANDB_MODE="${WANDB_MODE:-online}"
 WANDB_GROUP="${WANDB_GROUP:-exp5-vit-mask}"
 
+CONDA_SH="${CONDA_SH:-${SCRATCH_BASE}/miniconda3/etc/profile.d/conda.sh}"
+
 SCRIPT_DIR="${PROJECT_ROOT}/scripts"
 if [ -f "${SCRIPT_DIR}/set_scratch_env.sh" ]; then
   source "${SCRIPT_DIR}/set_scratch_env.sh"
 fi
 
-module purge
-module load anaconda3/2025.06
-source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
+if [ ! -f "${CONDA_SH}" ]; then
+  echo "ERROR: conda.sh not found at ${CONDA_SH}" >&2
+  echo "Pass the correct path with --export=ALL,CONDA_SH=/scratch/${NETID}/miniconda3/etc/profile.d/conda.sh" >&2
+  exit 1
+fi
 
 if [ ! -d "${CONDA_ENV}" ]; then
   echo "ERROR: Conda env not found at ${CONDA_ENV}" >&2
   exit 1
 fi
 
+# Avoid conda hook issues under strict nounset shells.
+export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
+set +u
+source "${CONDA_SH}"
 conda activate "${CONDA_ENV}"
+set -u
+
+if [ -z "${CONDA_PREFIX:-}" ] || [ ! -d "${CONDA_PREFIX}" ]; then
+  echo "ERROR: Failed to activate conda environment: ${CONDA_ENV}" >&2
+  echo "Pass the correct env with --export=ALL,CONDA_ENV=/scratch/${NETID}/conda-envs/<env>" >&2
+  exit 1
+fi
+echo "Activated conda env: ${CONDA_PREFIX}"
+
+# Ensure the activated env's Python wins over any module-level paths.
+export PATH="${CONDA_PREFIX}/bin:${PATH}"
 unset PYTHONHOME
 unset PYTHONPATH
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
-PYTHON="${CONDA_ENV}/bin/python"
+PYTHON="${CONDA_PREFIX}/bin/python"
+if [ ! -x "${PYTHON}" ]; then
+  echo "ERROR: Python not found at ${PYTHON}" >&2
+  exit 1
+fi
+echo "Using: ${PYTHON} ($(${PYTHON} --version 2>&1))"
+
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+
 cd "${PROJECT_ROOT}"
-mkdir -p slurm_logs
+mkdir -p slurm_logs/exp5_vit_small
 mkdir -p data/exp5_vit
 
 echo "=============================================================================="
