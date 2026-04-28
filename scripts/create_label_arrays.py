@@ -84,8 +84,8 @@ def dataset_root_name(dataset_name: str) -> str:
     return {
         "pcam": "pcam-hg",
         "pcam-hg": "pcam-hg",
-        "camelyon17": "camelyon17-hg",
-        "camelyon17-hg": "camelyon17-hg",
+        "camelyon17": "camelyon17-hg-2",
+        "camelyon17-hg": "camelyon17-hg-2",
     }[dataset_name]
 
 
