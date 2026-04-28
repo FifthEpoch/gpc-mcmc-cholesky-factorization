@@ -353,6 +353,31 @@ def make_loader(
     )
 
 
+SUMMARY_METRIC_ORDER: list[str] = [
+    "elpd",
+    "elpd_mean",
+    "pell",
+    "pell_mean",
+    "negative_log_likelihood_mean",
+    "posterior_expected_log_loss",
+    "posterior_total_log_loss",
+    "accuracy",
+    "auroc",
+    "auprc",
+    "brier",
+    "ece",
+    "number_errors",
+    "sensitivity_TPR",
+    "FNR",
+    "specificity_TNR",
+    "FPR",
+    "TP",
+    "FP",
+    "TN",
+    "FN",
+]
+
+
 def compute_metrics(
     labels: np.ndarray,
     probs: np.ndarray,
@@ -365,6 +390,19 @@ def compute_metrics(
         threshold=0.5,
         n_bins=15,
     )
+
+    nll_mean = metrics.get("negative_log_likelihood_mean")
+    elpd_value = metrics.get("elpd")
+    metrics["posterior_expected_log_loss"] = (
+        float(nll_mean) if nll_mean is not None else None
+    )
+    metrics["posterior_total_log_loss"] = (
+        float(-elpd_value) if elpd_value is not None else None
+    )
+    metrics["negative_log_loss"] = (
+        float(nll_mean) if nll_mean is not None else None
+    )
+
     metrics.update({
         "loss": float(avg_loss),
         "precision": float(precision_score(labels, preds, zero_division=0)),
@@ -373,6 +411,31 @@ def compute_metrics(
         "target_positive_rate": float(np.mean(labels)),
     })
     return metrics
+
+
+def _format_metric_value(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, np.integer)):
+        return f"{int(value)}"
+    if isinstance(value, (float, np.floating)):
+        v = float(value)
+        if not math.isfinite(v):
+            return "n/a"
+        return f"{v:.6f}"
+    return str(value)
+
+
+def print_test_metric_summary(
+    dataset_name: str, metrics: dict[str, Any], total_wallclock_sec: float
+) -> None:
+    print(f"\n[{dataset_name}] Test metrics ----------------------------------")
+    for key in SUMMARY_METRIC_ORDER:
+        if key in metrics:
+            print(f"  {key:32s}: {_format_metric_value(metrics[key])}")
+    print(f"Total wall-clock time: {total_wallclock_sec:.2f}s")
 
 
 def train_one_epoch(
@@ -516,6 +579,8 @@ def train_dataset(
 ) -> None:
     output_dir = args.output_root / dataset_name
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    dataset_wallclock_start = time.perf_counter()
 
     print("")
     print("==============================================================================")
@@ -691,16 +756,40 @@ def train_dataset(
                 "test/target_positive_rate": test_metrics["target_positive_rate"],
                 "test/auroc": test_metrics["auroc"],
                 "test/auprc": test_metrics["auprc"],
+                "test/elpd": test_metrics.get("elpd"),
+                "test/elpd_mean": test_metrics.get("elpd_mean"),
+                "test/negative_log_likelihood_mean": test_metrics.get(
+                    "negative_log_likelihood_mean"
+                ),
+                "test/posterior_expected_log_loss": test_metrics.get(
+                    "posterior_expected_log_loss"
+                ),
+                "test/posterior_total_log_loss": test_metrics.get(
+                    "posterior_total_log_loss"
+                ),
             },
             step=max(args.epochs, best_epoch),
         )
         wandb_run.finish()
 
+    total_wallclock_sec = time.perf_counter() - dataset_wallclock_start
+    test_metrics["total_wallclock_sec"] = round(float(total_wallclock_sec), 2)
+    save_json(
+        output_dir / "test_metrics.json",
+        {
+            "dataset": dataset_name,
+            "best_epoch": best_epoch,
+            "test": test_metrics,
+        },
+    )
+
+    print_test_metric_summary(dataset_name, test_metrics, total_wallclock_sec)
     print(
         f"[{dataset_name}] best_epoch={best_epoch} "
         f"test_loss={test_metrics['loss']:.4f} "
         f"test_acc={test_metrics['accuracy']:.4f} "
-        f"test_auroc={test_metrics['auroc'] if test_metrics['auroc'] is not None else 'n/a'}"
+        f"test_auroc={test_metrics['auroc'] if test_metrics['auroc'] is not None else 'n/a'} "
+        f"test_nll={test_metrics.get('negative_log_likelihood_mean') if test_metrics.get('negative_log_likelihood_mean') is not None else 'n/a'}"
     )
     print(f"[{dataset_name}] saved checkpoint: {best_checkpoint_path}")
     print(f"[{dataset_name}] saved metrics   : {output_dir / 'test_metrics.json'}")

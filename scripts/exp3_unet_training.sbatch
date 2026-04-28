@@ -21,34 +21,50 @@ fi
 SCRATCH_BASE="/scratch/${NETID}"
 PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
-DATASET="${DATASET:-pcam}"
+CONDA_SH="${CONDA_SH:-${SCRATCH_BASE}/miniconda3/etc/profile.d/conda.sh}"
+# Space-separated list, e.g. "pcam", "camelyon17", or "pcam camelyon17".
+DATASETS="${DATASETS:-pcam camelyon17}"
 EPOCHS="${EPOCHS:-5}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
 USE_WANDB="${USE_WANDB:-0}"
 WANDB_PROJECT="${WANDB_PROJECT:-ML-Final_project}"
 WANDB_ENTITY="${WANDB_ENTITY:-a-salt}"
 WANDB_MODE="${WANDB_MODE:-online}"
-WANDB_GROUP="${WANDB_GROUP:-}"
+WANDB_GROUP="${WANDB_GROUP:-exp3-unet}"
 
 SCRIPT_DIR="${PROJECT_ROOT}/scripts"
 if [ -f "${SCRIPT_DIR}/set_scratch_env.sh" ]; then
   source "${SCRIPT_DIR}/set_scratch_env.sh"
 fi
 
-module purge
-module load anaconda3/2025.06
-source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
-
+if [ ! -f "${CONDA_SH}" ]; then
+  echo "ERROR: conda.sh not found at ${CONDA_SH}" >&2
+  exit 1
+fi
 if [ ! -d "${CONDA_ENV}" ]; then
   echo "ERROR: Conda env not found at ${CONDA_ENV}" >&2
   exit 1
 fi
 
+export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
+set +u
+source "${CONDA_SH}"
 conda activate "${CONDA_ENV}"
+set -u
+
+if [ -z "${CONDA_PREFIX:-}" ] || [ ! -d "${CONDA_PREFIX}" ]; then
+  echo "ERROR: Failed to activate conda environment: ${CONDA_ENV}" >&2
+  exit 1
+fi
+echo "Activated conda env: ${CONDA_PREFIX}"
+
+export PATH="${CONDA_PREFIX}/bin:${PATH}"
 unset PYTHONHOME
 unset PYTHONPATH
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 
-PYTHON="${CONDA_ENV}/bin/python"
+PYTHON="${CONDA_PREFIX}/bin/python"
 cd "${PROJECT_ROOT}"
 mkdir -p slurm_logs
 mkdir -p data/exp3_unet
@@ -58,7 +74,7 @@ echo "Experiment 3: U-Net pathology classifier"
 echo "=============================================================================="
 echo "Job ID       : ${SLURM_JOB_ID}"
 echo "Node         : $(hostname)"
-echo "Dataset      : ${DATASET}"
+echo "Datasets     : ${DATASETS}"
 echo "Epochs       : ${EPOCHS}"
 echo "Batch size   : ${BATCH_SIZE}"
 echo "Use W&B      : ${USE_WANDB}"
@@ -80,15 +96,21 @@ if [ "${USE_WANDB}" = "1" ]; then
   fi
 fi
 
-"${PYTHON}" experiments/exp3_unet_classifier.py \
-  --dataset "${DATASET}" \
-  --data-root "${PROJECT_ROOT}/datasets" \
-  --output-root "${PROJECT_ROOT}/data/exp3_unet" \
-  --epochs "${EPOCHS}" \
-  --batch-size "${BATCH_SIZE}" \
-  "${WANDB_ARGS[@]}"
+# shellcheck disable=SC2206
+DATASETS_ARR=( ${DATASETS} )
+for DS in "${DATASETS_ARR[@]}"; do
+  echo ""
+  echo ">>>>>>>>>>>>>>>> Training U-Net on dataset: ${DS} <<<<<<<<<<<<<<<<"
+  "${PYTHON}" experiments/exp3_unet_classifier.py \
+    --dataset "${DS}" \
+    --data-root "${PROJECT_ROOT}/datasets" \
+    --output-root "${PROJECT_ROOT}/data/exp3_unet" \
+    --epochs "${EPOCHS}" \
+    --batch-size "${BATCH_SIZE}" \
+    "${WANDB_ARGS[@]}"
+done
 
 echo "=============================================================================="
 echo "Done: $(date)"
-echo "Outputs saved under ${PROJECT_ROOT}/data/exp3_unet"
+echo "Outputs saved under ${PROJECT_ROOT}/data/exp3_unet/<dataset>/"
 echo "=============================================================================="
