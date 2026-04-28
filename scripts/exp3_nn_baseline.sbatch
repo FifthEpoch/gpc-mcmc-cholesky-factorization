@@ -70,7 +70,9 @@ if [ -z "${EMBEDDING_DIR:-}" ]; then
       fi
       ;;
     camelyon17)
-      if [ -d "${PROJECT_ROOT}/datasets/camelyon17-hg/train/embeddings" ]; then
+      if [ -d "${PROJECT_ROOT}/datasets/camelyon17-hg-2/train/embeddings" ]; then
+        EMBEDDING_DIR="datasets/camelyon17-hg-2"
+      elif [ -d "${PROJECT_ROOT}/datasets/camelyon17-hg/train/embeddings" ]; then
         EMBEDDING_DIR="datasets/camelyon17-hg"
       else
         EMBEDDING_DIR="data/embeddings"
@@ -91,7 +93,7 @@ fi
 
 if [ -z "${SKIP_EMBED:-}" ]; then
   case "${EMBEDDING_DIR}" in
-    *pcam-hg|*camelyon17-hg|*embed)
+    *pcam-hg|*camelyon17-hg|*camelyon17-hg-2|*embed)
       SKIP_EMBED=1
       ;;
     *)
