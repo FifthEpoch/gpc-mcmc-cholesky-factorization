@@ -22,7 +22,8 @@ SCRATCH_BASE="/scratch/${NETID}"
 PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
 DATASET="${DATASET:-combined}"   # one of: pcam, camelyon17, combined (joint training)
-EPOCHS="${EPOCHS:-10}"
+EPOCHS="${EPOCHS:-50}"
+EVAL_TEST_EVERY="${EVAL_TEST_EVERY:-10}"   # snapshot test metrics every N epochs (0 disables)
 BATCH_SIZE="${BATCH_SIZE:-64}"
 MASK_RATIO="${MASK_RATIO:-0.0}"   # 0 disables masking; set >0 to enable
 LEARNING_RATE="${LEARNING_RATE:-3e-4}"
@@ -63,6 +64,7 @@ echo "Job ID         : ${SLURM_JOB_ID}"
 echo "Node           : $(hostname)"
 echo "Dataset        : ${DATASET}"
 echo "Epochs         : ${EPOCHS}"
+echo "Eval test every: ${EVAL_TEST_EVERY} epochs (0 = only at end)"
 echo "Batch size     : ${BATCH_SIZE}"
 echo "Mask ratio     : ${MASK_RATIO}"
 echo "Learning rate  : ${LEARNING_RATE}"
@@ -91,6 +93,7 @@ fi
   --data-root "${PROJECT_ROOT}/datasets" \
   --output-root "${PROJECT_ROOT}/data/exp5_vit" \
   --epochs "${EPOCHS}" \
+  --eval-test-every "${EVAL_TEST_EVERY}" \
   --batch-size "${BATCH_SIZE}" \
   --mask-ratio "${MASK_RATIO}" \
   --learning-rate "${LEARNING_RATE}" \

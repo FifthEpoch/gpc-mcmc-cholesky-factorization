@@ -100,6 +100,16 @@ def parse_args() -> argparse.Namespace:
         help="Directory to save the shared checkpoint, history, metrics, and plots.",
     )
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs.")
+    parser.add_argument(
+        "--eval-test-every",
+        type=int,
+        default=0,
+        help=(
+            "If >0, evaluate the *current* model on each test split every N epochs and save "
+            "a snapshot under <output_dir>/epoch_<NNN>/. The final best-checkpoint evaluation "
+            "still runs after training completes."
+        ),
+    )
     parser.add_argument("--batch-size", type=int, default=64, help="Mini-batch size.")
     parser.add_argument(
         "--learning-rate", type=float, default=3e-4, help="AdamW learning rate."
@@ -766,6 +776,65 @@ def run_experiment(args: argparse.Namespace, device: torch.device) -> None:
     epochs_ran = 0
     best_checkpoint_path = output_dir / "best_model.pt"
 
+    base_extra_static = {
+        "model_architecture": "vit_small",
+        "patch_size": int(args.patch_size),
+        "image_size": int(args.image_size),
+        "embed_dim": int(args.embed_dim),
+        "depth": int(args.depth),
+        "num_heads": int(args.num_heads),
+        "mlp_ratio": float(args.mlp_ratio),
+        "mask_ratio": float(args.mask_ratio),
+        "dropout": float(args.dropout),
+        "attn_dropout": float(args.attn_dropout),
+        "learning_rate": float(args.learning_rate),
+        "weight_decay": float(args.weight_decay),
+        "batch_size": int(args.batch_size),
+        "epochs_requested": int(args.epochs),
+        "trainable_parameters": int(n_parameters),
+        "n_train": int(len(train_records)),
+        "n_val": int(len(valid_records)),
+        "dataset_sources": sources,
+    }
+
+    def _evaluate_all_test_splits(
+        snapshot_output_dir: Path,
+        timing_ctx_local: dict[str, float],
+        extra_local: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        snapshot_output_dir.mkdir(parents=True, exist_ok=True)
+        results: dict[str, dict[str, Any]] = {}
+        for src in sources:
+            results[src] = evaluate_split(
+                label=src,
+                title_label=src,
+                records=bundles[src]["test"],
+                model=model,
+                criterion=criterion,
+                device=device,
+                args=args,
+                output_dir=snapshot_output_dir,
+                timing_ctx=timing_ctx_local,
+                base_metrics_extra=extra_local,
+                wandb_run=wandb_run,
+            )
+        if len(sources) > 1:
+            combined_test = [r for s in sources for r in bundles[s]["test"]]
+            results["combined"] = evaluate_split(
+                label="combined",
+                title_label="combined (" + "+".join(sources) + ")",
+                records=combined_test,
+                model=model,
+                criterion=criterion,
+                device=device,
+                args=args,
+                output_dir=snapshot_output_dir,
+                timing_ctx=timing_ctx_local,
+                base_metrics_extra=extra_local,
+                wandb_run=wandb_run,
+            )
+        return results
+
     train_phase_start = perf_counter()
     epoch_bar = tqdm(
         range(1, args.epochs + 1),
@@ -852,6 +921,38 @@ def run_experiment(args: argparse.Namespace, device: torch.device) -> None:
             f"time={epoch_time:.1f}s"
         )
 
+        save_json(
+            output_dir / "history.json",
+            {
+                "dataset_sources": sources,
+                "best_epoch_so_far": best_epoch,
+                "best_val_auroc_so_far": (
+                    best_val_auroc if math.isfinite(best_val_auroc) else None
+                ),
+                "history": history,
+            },
+        )
+
+        if args.eval_test_every > 0 and (epoch % args.eval_test_every == 0):
+            snapshot_dir = output_dir / f"epoch_{epoch:03d}"
+            print(
+                f"\n[snapshot] Evaluating current model on test splits at epoch {epoch} "
+                f"-> {snapshot_dir}"
+            )
+            timing_ctx_snap = {
+                "data_loading_time_sec": data_loading_time,
+                "train_time_sec": perf_counter() - train_phase_start,
+            }
+            extra_snap = {
+                **base_extra_static,
+                "epochs_ran": int(epoch),
+                "snapshot_epoch": int(epoch),
+                "best_val_auroc": (
+                    round(best_val_auroc, 6) if math.isfinite(best_val_auroc) else None
+                ),
+            }
+            _evaluate_all_test_splits(snapshot_dir, timing_ctx_snap, extra_snap)
+
     train_time = perf_counter() - train_phase_start
 
     save_json(
@@ -869,65 +970,18 @@ def run_experiment(args: argparse.Namespace, device: torch.device) -> None:
     model.load_state_dict(checkpoint["model_state_dict"])
 
     base_extra = {
+        **base_extra_static,
         "best_val_auroc": (
             round(best_val_auroc, 6) if math.isfinite(best_val_auroc) else None
         ),
-        "model_architecture": "vit_small",
-        "patch_size": int(args.patch_size),
-        "image_size": int(args.image_size),
-        "embed_dim": int(args.embed_dim),
-        "depth": int(args.depth),
-        "num_heads": int(args.num_heads),
-        "mlp_ratio": float(args.mlp_ratio),
-        "mask_ratio": float(args.mask_ratio),
-        "dropout": float(args.dropout),
-        "attn_dropout": float(args.attn_dropout),
-        "learning_rate": float(args.learning_rate),
-        "weight_decay": float(args.weight_decay),
-        "batch_size": int(args.batch_size),
-        "epochs_requested": int(args.epochs),
         "epochs_ran": int(epochs_ran),
-        "trainable_parameters": int(n_parameters),
-        "n_train": int(len(train_records)),
-        "n_val": int(len(valid_records)),
-        "dataset_sources": sources,
     }
     timing_ctx = {
         "data_loading_time_sec": data_loading_time,
         "train_time_sec": train_time,
     }
 
-    per_split_results: dict[str, dict[str, Any]] = {}
-    for source in sources:
-        per_split_results[source] = evaluate_split(
-            label=source,
-            title_label=source,
-            records=bundles[source]["test"],
-            model=model,
-            criterion=criterion,
-            device=device,
-            args=args,
-            output_dir=output_dir,
-            timing_ctx=timing_ctx,
-            base_metrics_extra=base_extra,
-            wandb_run=wandb_run,
-        )
-
-    if len(sources) > 1:
-        combined_test = [r for s in sources for r in bundles[s]["test"]]
-        per_split_results["combined"] = evaluate_split(
-            label="combined",
-            title_label="combined (" + "+".join(sources) + ")",
-            records=combined_test,
-            model=model,
-            criterion=criterion,
-            device=device,
-            args=args,
-            output_dir=output_dir,
-            timing_ctx=timing_ctx,
-            base_metrics_extra=base_extra,
-            wandb_run=wandb_run,
-        )
+    per_split_results = _evaluate_all_test_splits(output_dir, timing_ctx, base_extra)
 
     experiment_end = datetime.now().astimezone()
     total_runtime = perf_counter() - experiment_start_ts
