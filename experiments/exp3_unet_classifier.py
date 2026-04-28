@@ -377,6 +377,47 @@ SUMMARY_METRIC_ORDER: list[str] = [
     "FN",
 ]
 
+FULL_METRIC_DEFAULTS: dict[str, float | int | None] = {
+    "log_likelihood_mean": None,
+    "negative_log_likelihood_mean": None,
+    "elpd": None,
+    "elpd_mean": None,
+    "pell": None,
+    "pell_mean": None,
+    "mean_predictive_log_likelihood": None,
+    "predictive_likelihood": None,
+    "brier": None,
+    "ece": None,
+    "auroc": None,
+    "auprc": None,
+    "accuracy": None,
+    "number_errors": None,
+    "sensitivity_TPR": None,
+    "sensitivity_tpr": None,
+    "FNR": None,
+    "false_negative_rate": None,
+    "specificity_TNR": None,
+    "specificity_tnr": None,
+    "FPR": None,
+    "false_positive_rate": None,
+    "TP": None,
+    "tp": None,
+    "FP": None,
+    "fp": None,
+    "TN": None,
+    "tn": None,
+    "FN": None,
+    "fn": None,
+    "posterior_expected_log_loss": None,
+    "posterior_total_log_loss": None,
+    "negative_log_loss": None,
+    "loss": None,
+    "precision": None,
+    "recall": None,
+    "positive_rate": None,
+    "target_positive_rate": None,
+}
+
 
 def compute_metrics(
     labels: np.ndarray,
@@ -410,7 +451,9 @@ def compute_metrics(
         "positive_rate": float(np.mean(preds)),
         "target_positive_rate": float(np.mean(labels)),
     })
-    return metrics
+    normalized_metrics: dict[str, float | int | None] = dict(FULL_METRIC_DEFAULTS)
+    normalized_metrics.update(metrics)
+    return normalized_metrics
 
 
 def _format_metric_value(value: Any) -> str:
