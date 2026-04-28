@@ -524,8 +524,8 @@ def main() -> None:
         "cuda" if (torch.cuda.is_available() and not args.no_cuda) else "cpu"
     )
 
-    X = torch.tensor(train.X, dtype=torch.float32, device=device)
-    y = torch.tensor(train.y, dtype=torch.float32, device=device)
+    X_cpu = torch.tensor(train.X, dtype=torch.float32)
+    y_cpu = torch.tensor(train.y, dtype=torch.float32)
 
     class SVGPBinaryClassifier(gpytorch.models.ApproximateGP):
         def __init__(self, inducing_points):
@@ -554,10 +554,10 @@ def main() -> None:
             covar_x = self.covar_module(x)
             return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
-    num_inducing = min(args.num_inducing, X.size(0))
+    num_inducing = min(args.num_inducing, X_cpu.size(0))
 
-    perm = torch.randperm(X.size(0), device=device)
-    inducing_points = X[perm[:num_inducing]].clone()
+    perm = torch.randperm(X_cpu.size(0))
+    inducing_points = X_cpu[perm[:num_inducing]].clone().to(device)
 
     model = SVGPBinaryClassifier(inducing_points=inducing_points).to(device)
     likelihood = gpytorch.likelihoods.BernoulliLikelihood().to(device)
@@ -565,7 +565,7 @@ def main() -> None:
     model.train()
     likelihood.train()
 
-    dataset = torch.utils.data.TensorDataset(X, y)
+    dataset = torch.utils.data.TensorDataset(X_cpu, y_cpu)
 
     loader = torch.utils.data.DataLoader(
         dataset,
@@ -586,7 +586,7 @@ def main() -> None:
     mll = gpytorch.mlls.VariationalELBO(
         likelihood,
         model,
-        num_data=X.size(0),
+        num_data=X_cpu.size(0),
     )
 
     t0 = time.perf_counter()
@@ -596,6 +596,9 @@ def main() -> None:
         running_loss = 0.0
 
         for xb, yb in loader:
+            xb = xb.to(device, non_blocking=(device.type == "cuda"))
+            yb = yb.to(device, non_blocking=(device.type == "cuda"))
+
             optimizer.zero_grad(set_to_none=True)
 
             output = model(xb)
@@ -606,7 +609,7 @@ def main() -> None:
 
             running_loss += float(loss.item()) * xb.size(0)
 
-        mean_loss = running_loss / X.size(0)
+        mean_loss = running_loss / X_cpu.size(0)
         epoch_losses.append(mean_loss)
 
         print_every = max(1, args.num_epochs // 10)
