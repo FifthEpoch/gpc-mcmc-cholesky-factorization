@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --time=24:00:00
-#SBATCH --mem=64G
+#SBATCH --mem=32G
 #SBATCH --output=slurm_logs/exp5_vit_small/%x_%j.out
 #SBATCH --error=slurm_logs/exp5_vit_small/%x_%j.err
 #SBATCH --account=csci_ga_2565-2026sp
@@ -26,7 +26,7 @@ CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
 DATASET="${DATASET:-combined}"   # one of: pcam, camelyon17, combined (joint training)
 EPOCHS="${EPOCHS:-30}"
 EVAL_TEST_EVERY="${EVAL_TEST_EVERY:-10}"   # snapshot test metrics every N epochs (0 disables)
-BATCH_SIZE="${BATCH_SIZE:-64}"
+BATCH_SIZE="${BATCH_SIZE:-32}"
 MASK_RATIO="${MASK_RATIO:-0.0}"   # 0 disables masking; set >0 to enable
 LEARNING_RATE="${LEARNING_RATE:-3e-4}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-0.05}"
