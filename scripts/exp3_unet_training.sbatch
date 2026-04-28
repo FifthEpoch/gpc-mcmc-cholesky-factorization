@@ -6,8 +6,10 @@
 #SBATCH --gres=gpu:1
 #SBATCH --time=08:00:00
 #SBATCH --mem=64G
-#SBATCH --output=slurm_logs/%x_%j.out
-#SBATCH --error=slurm_logs/%x_%j.err
+#SBATCH --output=slurm_logs/exp3_unet/%x_%j.out
+#SBATCH --error=slurm_logs/exp3_unet/%x_%j.err
+#SBATCH --account=csci_ga_2565-2026sp
+#SBATCH --partition=c12m85-a100-1
 
 set -euo pipefail
 export PYTHONNOUSERSITE=1
