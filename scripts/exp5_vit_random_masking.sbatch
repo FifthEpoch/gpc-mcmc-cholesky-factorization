@@ -8,6 +8,8 @@
 #SBATCH --mem=64G
 #SBATCH --output=slurm_logs/exp5_vit_small/%x_%j.out
 #SBATCH --error=slurm_logs/exp5_vit_small/%x_%j.err
+#SBATCH --account=csci_ga_2565-2026sp
+#SBATCH --partition=c12m85-a100-1
 
 set -euo pipefail
 export PYTHONNOUSERSITE=1
