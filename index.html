@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Scalable Bayesian Gaussian Process Classification via Accelerated RPCholesky and HMC</title>
+
+  <meta
+    name="description"
+    content="Project page for scalable Bayesian Gaussian Process Classification using accelerated RPCholesky and Hamiltonian Monte Carlo on PCam."
+  />
+
+  <style>
+    :root {
+      --max-width: 980px;
+      --text: #1f2933;
+      --muted: #5f6c7b;
+      --bg: #ffffff;
+      --light-bg: #f6f8fa;
+      --border: #d0d7de;
+      --accent: #2563eb;
+      --code-bg: #0d1117;
+      --code-text: #e6edf3;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.6;
+    }
+
+    header {
+      background: var(--light-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 64px 24px 48px;
+      text-align: center;
+    }
+
+    header h1 {
+      max-width: 980px;
+      margin: 0 auto 18px;
+      font-size: 2.35rem;
+      line-height: 1.15;
+      font-weight: 750;
+    }
+
+    .subtitle {
+      max-width: 820px;
+      margin: 0 auto 24px;
+      color: var(--muted);
+      font-size: 1.12rem;
+    }
+
+    .authors {
+      margin: 18px auto;
+      max-width: 760px;
+      font-size: 1rem;
+    }
+
+    .authors a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .authors a:hover {
+      text-decoration: underline;
+    }
+
+    .links {
+      margin-top: 28px;
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .button {
+      display: inline-block;
+      padding: 10px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: white;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+
+    .button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    main {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 48px 24px;
+    }
+
+    section {
+      margin-bottom: 58px;
+    }
+
+    h2 {
+      font-size: 1.65rem;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+
+    h3 {
+      margin-top: 28px;
+      margin-bottom: 8px;
+      font-size: 1.2rem;
+    }
+
+    p {
+      margin: 0 0 16px;
+    }
+
+    ul {
+      margin-top: 8px;
+      padding-left: 22px;
+    }
+
+    li {
+      margin-bottom: 8px;
+    }
+
+    .teaser {
+      width: 100%;
+      margin: 32px 0 8px;
+      text-align: center;
+    }
+
+    .teaser img,
+    .figure img {
+      max-width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: white;
+    }
+
+    .caption {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      text-align: center;
+    }
+
+    .abstract {
+      font-size: 1.05rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      background: var(--light-bg);
+    }
+
+    .card h3 {
+      margin-top: 0;
+      margin-bottom: 8px;
+      font-size: 1.05rem;
+    }
+
+    .metric {
+      font-size: 1.45rem;
+      font-weight: 750;
+      margin-bottom: 4px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 18px 0;
+      font-size: 0.95rem;
+    }
+
+    th,
+    td {
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+    }
+
+    th {
+      background: var(--light-bg);
+      font-weight: 650;
+    }
+
+    tr.highlight {
+      background: #eef4ff;
+      font-weight: 650;
+    }
+
+    pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 20px;
+      border-radius: 10px;
+      overflow-x: auto;
+      font-size: 0.9rem;
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    .equation {
+      overflow-x: auto;
+      padding: 14px 16px;
+      background: var(--light-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.95rem;
+      margin: 18px 0;
+    }
+
+    footer {
+      border-top: 1px solid var(--border);
+      background: var(--light-bg);
+      color: var(--muted);
+      padding: 32px 24px;
+      text-align: center;
+      font-size: 0.95rem;
+    }
+
+    @media (max-width: 600px) {
+      header {
+        padding: 46px 20px 36px;
+      }
+
+      header h1 {
+        font-size: 1.85rem;
+      }
+
+      main {
+        padding: 36px 20px;
+      }
+
+      table {
+        font-size: 0.85rem;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>
+      Scalable Bayesian Gaussian Process Classification via Accelerated RPCholesky and HMC
+    </h1>
+
+    <p class="subtitle">
+      Making full-data Bayesian Gaussian Process Classification tractable for histopathology-scale cancer classification,
+      while preserving calibrated uncertainty.
+    </p>
+
+    <div class="authors">
+      <a href="#">Your Name</a>,
+      <a href="#">Coauthor Name</a>,
+      <a href="#">Coauthor Name</a>
+      <br />
+      Your Affiliation
+      <br />
+      Advisor: Advisor Name
+    </div>
+
+    <div class="links">
+      <a class="button" href="#">Paper</a>
+      <a class="button" href="#">Code</a>
+      <a class="button" href="#">Poster</a>
+      <a class="button" href="#">Slides</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="teaser">
+      <img src="assets/teaser.png" alt="Overview of accelerated RPCholesky and HMC Gaussian Process Classification" />
+      <p class="caption">
+        Overview of our pipeline: pathology image embeddings are compressed with PCA, approximated with accelerated RPCholesky,
+        sampled with HMC, and evaluated as calibrated Bayesian predictions.
+      </p>
+    </section>
+
+    <section>
+      <h2>Abstract</h2>
+      <p class="abstract">
+        Cancer diagnosis is a setting where misclassification errors are highly asymmetric: a false negative can delay
+        treatment, while a false positive can lead to unnecessary biopsies and patient distress. In this project, we study
+        whether full-data Bayesian Gaussian Process Classification can be made practical for histopathology-scale datasets.
+        Gaussian Process Classification provides calibrated probabilistic predictions, but standard inference requires dense
+        kernel operations that are infeasible at PCam scale. We combine accelerated Randomly Pivoted Cholesky, Hamiltonian
+        Monte Carlo in low-rank non-centered coordinates, and a pivots-as-inducing-points prediction rule. This makes
+        MCMC-based GPC tractable on the full PCam training set and improves calibration over SVGP and neural network
+        baselines while remaining competitive on accuracy.
+      </p>
+    </section>
+
+    <section>
+      <h2>Motivation</h2>
+      <p>
+        Standard neural network classifiers can achieve strong accuracy on histopathology benchmarks, but their softmax
+        probabilities are often overconfident and do not necessarily represent reliable uncertainty. In medical triage, this
+        matters: pathologists need probabilities that can support decisions about which tissue patches require human review.
+      </p>
+
+      <p>
+        Gaussian Process Classification is a natural alternative because it gives a posterior over latent functions and
+        produces predictive distributions rather than only point estimates. The computational problem is the kernel matrix:
+        for <code>N = 262,144</code> PCam training examples, the dense kernel matrix would require roughly 550 GB in
+        float64, and exact Cholesky factorization is not practical.
+      </p>
+    </section>
+
+    <section>
+      <h2>Problem Setup</h2>
+
+      <div class="grid">
+        <div class="card">
+          <h3>Dataset</h3>
+          <p>
+            PCam, a binary histopathology dataset for detecting metastatic tissue in image patches.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Training Scale</h3>
+          <p>
+            <code>N = 262,144</code> training points and <code>32,768</code> held-out test points.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Features</h3>
+          <p>
+            Phikon pathology transformer embeddings, projected to <code>d = 512</code> dimensions using PCA.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Method</h2>
+
+      <h3>1. Accelerated RPCholesky</h3>
+      <p>
+        We approximate the full kernel matrix with a low-rank factor produced by accelerated Randomly Pivoted Cholesky.
+        Instead of materializing the full <code>N × N</code> matrix, the algorithm queries only selected kernel columns.
+      </p>
+
+      <div class="equation">
+        F Fᵀ ≈ K, &nbsp;&nbsp;&nbsp; F ∈ R<sup>N×k</sup>, &nbsp;&nbsp;&nbsp; k ≪ N
+      </div>
+
+      <p>
+        At PCam scale, we use <code>k = 200</code>, reducing the kernel-evaluation cost from <code>O(N²)</code> to
+        <code>O(Nk)</code>.
+      </p>
+
+      <h3>2. HMC in Non-Centered Coordinates</h3>
+      <p>
+        We reparameterize the GP latent function as:
+      </p>
+
+      <div class="equation">
+        f = Fν, &nbsp;&nbsp;&nbsp; ν ∼ N(0, I<sub>k</sub>)
+      </div>
+
+      <p>
+        This changes the sampling problem from an <code>N</code>-dimensional posterior over latent function values to a
+        <code>k</code>-dimensional posterior over <code>ν</code>. We then run Hamiltonian Monte Carlo with 25 leapfrog
+        steps and dual-averaging step-size adaptation.
+      </p>
+
+      <h3>3. Pivots-as-Inducing-Points Prediction</h3>
+      <p>
+        The RPCholesky pivot set is reused at test time as inducing points. This avoids evaluating the test kernel against
+        all training points, replacing the naive predictive cost with a much smaller pivot-based computation.
+      </p>
+    </section>
+
+    <section>
+      <h2>Computational Cost</h2>
+
+      <div class="grid">
+        <div class="card">
+          <h3>Kernel Factorization</h3>
+          <div class="metric">16 sec</div>
+          <p class="muted">Accelerated RPCholesky on the full PCam training set.</p>
+        </div>
+
+        <div class="card">
+          <h3>HMC Sampling</h3>
+          <div class="metric">~20 min</div>
+          <p class="muted">1000 post-warmup samples with 25 leapfrog steps.</p>
+        </div>
+
+        <div class="card">
+          <h3>Prediction</h3>
+          <div class="metric">~2 sec</div>
+          <p class="muted">Pivot-based predictive inference on the test set.</p>
+        </div>
+      </div>
+
+      <p>
+        The full pipeline runs in approximately 22 minutes on a single GPU. Dense Cholesky at this scale would require
+        cubic time and hundreds of gigabytes of memory, making the direct approach infeasible.
+      </p>
+    </section>
+
+    <section>
+      <h2>Experimental Progression</h2>
+
+      <h3>Experiment 1: Small-Scale Validation</h3>
+      <p>
+        We first tested the method on <code>N = 2000</code> synthetic blob data and PCam subsamples. These experiments
+        established that accelerated RPCholesky reduces runtime and that HMC mixes better than Random-Walk Metropolis
+        and MALA on the PCam posterior.
+      </p>
+
+      <h3>Experiment 2: Full-Scale PCam Benchmark</h3>
+      <p>
+        We scaled to the full PCam training set using <code>N = 262,144</code>, <code>d = 512</code> Phikon embeddings,
+        and RPCholesky rank <code>k = 200</code>. We compare against SVGP and a Residual MLP trained on the same
+        embeddings.
+      </p>
+
+      <h3>Experiment 3: Calibration and Posterior Uncertainty</h3>
+      <p>
+        We analyze whether the low-rank HMC GP improves probabilistic metrics such as ECE and NLL, where calibrated
+        uncertainty matters more than raw classification accuracy alone.
+      </p>
+    </section>
+
+    <section>
+      <h2>Final Results</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>Accuracy</th>
+            <th>AUROC</th>
+            <th>NLL</th>
+            <th>ECE</th>
+            <th>Brier</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>GPyTorch SVGP</td>
+            <td>0.882</td>
+            <td>0.971</td>
+            <td>0.087</td>
+            <td>0.101</td>
+            <td>0.087</td>
+          </tr>
+          <tr>
+            <td>Residual MLP</td>
+            <td>0.877</td>
+            <td>0.965</td>
+            <td>0.111</td>
+            <td>0.116</td>
+            <td>0.111</td>
+          </tr>
+          <tr class="highlight">
+            <td>Low-rank HMC GP, ours</td>
+            <td>0.914</td>
+            <td>0.978</td>
+            <td>0.064</td>
+            <td>0.055</td>
+            <td>0.064</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>
+        Our method achieves the highest accuracy and AUROC while substantially improving calibration. The ECE reduction is
+        especially important in a diagnostic setting, where confidence scores may be used to decide which patches should be
+        reviewed by a human pathologist.
+      </p>
+    </section>
+
+    <section>
+      <h2>Clinical Interpretation</h2>
+
+      <p>
+        Accuracy and AUROC measure discrimination, but they do not fully capture whether a model's probabilities are usable
+        for decision-making. Expected Calibration Error measures the gap between stated confidence and empirical correctness.
+        In cancer screening, this directly affects whether confidence thresholds are meaningful.
+      </p>
+
+      <p>
+        Our model reduces ECE from <code>0.101</code> for SVGP to <code>0.055</code>, and from <code>0.116</code> for the
+        MLP to <code>0.055</code>. This indicates that the HMC posterior better represents uncertainty than the variational
+        approximation used by SVGP or the point-estimate predictions used by the MLP.
+      </p>
+    </section>
+
+    <section>
+      <h2>Confusion Matrices</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>TP</th>
+            <th>TN</th>
+            <th>FP</th>
+            <th>FN</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>GPyTorch SVGP</td>
+            <td>12,813</td>
+            <td>16,078</td>
+            <td>313</td>
+            <td>3,564</td>
+          </tr>
+          <tr>
+            <td>Residual MLP</td>
+            <td>12,538</td>
+            <td>16,212</td>
+            <td>179</td>
+            <td>3,839</td>
+          </tr>
+          <tr class="highlight">
+            <td>Low-rank HMC GP, ours</td>
+            <td>13,908</td>
+            <td>16,043</td>
+            <td>348</td>
+            <td>2,469</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>
+        At the default threshold, our method recovers substantially more true positives than both baselines, with a smaller
+        increase in false positives. In a cancer screening context, this trade-off is often preferable because missed
+        positives carry greater clinical risk than additional human review.
+      </p>
+    </section>
+
+    <section>
+      <h2>Additional Findings</h2>
+
+      <h3>Lower Rank Can Improve Generalization</h3>
+      <p>
+        A rank sweep over <code>k ∈ {100, 200, 300, 500}</code> showed that predictive performance peaked at
+        <code>k = 200</code>, even though higher ranks gave tighter kernel approximations. This suggests that the
+        low-rank approximation also acts as implicit regularization.
+      </p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Rank k</th>
+            <th>Trace Error</th>
+            <th>NLL</th>
+            <th>ECE</th>
+            <th>AUROC</th>
+            <th>Accuracy</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>100</td>
+            <td>14.2%</td>
+            <td>0.196</td>
+            <td>0.0445</td>
+            <td>0.980</td>
+            <td>0.921</td>
+          </tr>
+          <tr class="highlight">
+            <td>200</td>
+            <td>10.8%</td>
+            <td>0.186</td>
+            <td>0.0464</td>
+            <td>0.983</td>
+            <td>0.927</td>
+          </tr>
+          <tr>
+            <td>300</td>
+            <td>8.6%</td>
+            <td>0.192</td>
+            <td>0.0509</td>
+            <td>0.982</td>
+            <td>0.924</td>
+          </tr>
+          <tr>
+            <td>500</td>
+            <td>6.7%</td>
+            <td>0.194</td>
+            <td>0.0525</td>
+            <td>0.983</td>
+            <td>0.923</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>HMC Mixes Efficiently</h3>
+      <p>
+        In the low-rank posterior, longer HMC trajectories substantially reduce autocorrelation time. With 25 leapfrog
+        steps, HMC reaches efficient mixing while remaining computationally feasible.
+      </p>
+    </section>
+
+    <section>
+      <h2>Conclusion</h2>
+
+      <p>
+        This project demonstrates that MCMC-based Gaussian Process Classification is now tractable on histopathology-scale
+        datasets when combined with accelerated RPCholesky and low-rank HMC inference. The method is not as fast as SVGP
+        or neural network baselines, but it makes calibrated Bayesian classification deployable at a scale where full GPC
+        was previously infeasible.
+      </p>
+
+      <p>
+        The main result is not only improved accuracy, but improved uncertainty quantification. For domains such as medical
+        diagnosis, where confidence scores affect downstream human review, this calibration improvement is central to the
+        value of the method.
+      </p>
+    </section>
+
+    <section>
+      <h2>Future Work</h2>
+
+      <ul>
+        <li>Extend the method to multiclass medical classification tasks.</li>
+        <li>Run stronger hyperparameter sweeps for neural network baselines.</li>
+        <li>Reconcile the HMC sigmoid likelihood with the SVGP probit likelihood for cleaner comparisons.</li>
+        <li>Explore whether the observed low-rank regularization effect generalizes beyond PCam.</li>
+        <li>Test hybrid architectures that combine learned image features with principled Bayesian probabilistic heads.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Citation</h2>
+      <p>
+        If you use or refer to this project, please cite:
+      </p>
+
+      <pre><code>@misc{yourname2026scalablegpc,
+  title  = {Scalable Bayesian Gaussian Process Classification via Accelerated RPCholesky and HMC},
+  author = {Your Name and Coauthor Name and Coauthor Name},
+  year   = {2026}
+}</code></pre>
+    </section>
+  </main>
+
+  <footer>
+    Scalable Bayesian Gaussian Process Classification via Accelerated RPCholesky and HMC.
+  </footer>
+</body>
+</html>
