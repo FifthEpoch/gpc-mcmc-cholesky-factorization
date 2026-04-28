@@ -128,6 +128,52 @@ def _read_labels_csv(path: str) -> np.ndarray:
     return y.reshape(-1).astype(np.int64)
 
 
+def _stratified_subsample_indices(
+    y: np.ndarray,
+    max_n: int,
+    seed: int,
+) -> np.ndarray:
+    """
+    Return sorted indices for a stratified subsample without replacement.
+
+    The requested sample size is allocated across classes in proportion to the
+    original split, with leftover slots assigned to classes with the largest
+    fractional remainder.
+    """
+    y = np.asarray(y).reshape(-1)
+    rng = np.random.default_rng(seed)
+
+    classes, counts = np.unique(y, return_counts=True)
+    proportions = counts / counts.sum()
+    raw_alloc = proportions * max_n
+    alloc = np.floor(raw_alloc).astype(int)
+
+    remaining = max_n - int(alloc.sum())
+    if remaining > 0:
+        fractional_order = np.argsort(-(raw_alloc - alloc))
+        for class_pos in fractional_order[:remaining]:
+            alloc[class_pos] += 1
+
+    alloc = np.minimum(alloc, counts)
+
+    while int(alloc.sum()) < max_n:
+        capacity = counts - alloc
+        if np.all(capacity <= 0):
+            break
+        class_pos = int(np.argmax(capacity))
+        alloc[class_pos] += 1
+
+    chosen_indices = []
+    for class_value, class_n in zip(classes, alloc):
+        class_indices = np.flatnonzero(y == class_value)
+        chosen = rng.choice(class_indices, size=int(class_n), replace=False)
+        chosen_indices.append(chosen)
+
+    idx = np.concatenate(chosen_indices)
+    idx.sort()
+    return idx
+
+
 def _find_embedding_path(
     dataset_root: str,
     split: str,
@@ -211,9 +257,7 @@ def load_split_raw(
         )
 
     if max_n is not None and max_n > 0 and len(X) > max_n:
-        rng = np.random.default_rng(seed)
-        idx = rng.choice(len(X), size=max_n, replace=False)
-        idx.sort()
+        idx = _stratified_subsample_indices(y, max_n=max_n, seed=seed)
         X = X[idx]
         y = y[idx]
 
