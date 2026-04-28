@@ -61,7 +61,7 @@ TEST_LABELS="${TEST_LABELS:-${DATASET_ROOT}/test/embeddings/y_embeddings.npy}"
 TRAIN_SUBSAMPLE="${TRAIN_SUBSAMPLE:-3000}"
 TEST_SUBSAMPLE="${TEST_SUBSAMPLE:-500}"
 K_VALUE="${K_VALUE:-200}"
-BANDWIDTH="${BANDWIDTH:-approx_median}"
+BANDWIDTH="${BANDWIDTH:-20}"
 BLOCK_SIZE="${BLOCK_SIZE:-10}"
 STOPTOL="${STOPTOL:-1e-13}"
 SEED="${SEED:-42}"
@@ -71,8 +71,8 @@ N_WARMUP="${N_WARMUP:-200}"
 N_LEAPFROG="${N_LEAPFROG:-12}"
 PREDICTION_BATCH_SIZE="${PREDICTION_BATCH_SIZE:-512}"
 
-FACTOR_DIR="${FACTOR_DIR:-${DATASET_ROOT}/train/embeddings/exp2_rpchol_3k_stratified_standardized}"
-OUTPUT_DIR="${OUTPUT_DIR:-data/exp2_rose_exp1_metrics_pcam_3k_500}"
+FACTOR_DIR="${FACTOR_DIR:-${DATASET_ROOT}/train/embeddings/exp2_rpchol_3k_stratified_standardized_bw20}"
+OUTPUT_DIR="${OUTPUT_DIR:-data/exp2_rose_exp1_metrics_pcam_3k_500_bw20}"
 
 if [ -f "${PROJECT_ROOT}/scripts/set_scratch_env.sh" ]; then
   # shellcheck disable=SC1091
