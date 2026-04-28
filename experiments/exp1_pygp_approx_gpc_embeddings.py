@@ -27,6 +27,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import numpy as np
+from scipy.special import ndtr
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -130,7 +131,25 @@ def _prediction_mean_to_prob(ym: np.ndarray) -> np.ndarray:
     return np.clip(ym, 0.0, 1.0)
 
 
-def predict_with_model(model: Any, X_pred: np.ndarray) -> dict[str, Any]:
+def _latent_gaussian_to_probit_prob(fm: np.ndarray, fs2: np.ndarray) -> np.ndarray:
+    """
+    Convert the latent Gaussian predictive approximation to P(y=1).
+
+    pyGPs GPC uses labels in {-1, +1}. For its probit/erf classification
+    likelihood, integrating p(y=+1 | f) over f ~ N(mu, var) gives
+    Phi(mu / sqrt(1 + var)). This avoids ambiguity in ``ym``: pyGPs versions
+    differ on whether it is a probability-like output or an output-scale mean.
+    """
+    fm = np.asarray(fm, dtype=float).reshape(-1)
+    fs2 = np.maximum(np.asarray(fs2, dtype=float).reshape(-1), 0.0)
+    return np.clip(ndtr(fm / np.sqrt(1.0 + fs2)), 0.0, 1.0)
+
+
+def predict_with_model(
+    model: Any,
+    X_pred: np.ndarray,
+    probability_source: str,
+) -> dict[str, Any]:
     """Predict from a fitted pyGPs model."""
     ym, ys2, fm, fs2, lp = model.predict(X_pred)
 
@@ -140,9 +159,28 @@ def predict_with_model(model: Any, X_pred: np.ndarray) -> dict[str, Any]:
     fs2 = np.asarray(fs2, dtype=float).reshape(-1)
     lp = np.asarray(lp, dtype=float).reshape(-1)
 
-    prob = _prediction_mean_to_prob(ym)
+    prob_from_latent = _latent_gaussian_to_probit_prob(fm, fs2)
+    prob_from_y_mean = _prediction_mean_to_prob(ym)
+
+    if probability_source == "latent-probit":
+        prob = prob_from_latent
+    elif probability_source == "y-mean":
+        prob = prob_from_y_mean
+    elif probability_source == "auto":
+        # Prefer the latent Gaussian path when y_mean looks like an
+        # output-scale mean near zero, because treating that as a probability
+        # creates the all-negative failure mode.
+        if np.nanmin(ym) >= 0.0 and np.nanmax(ym) <= 1.0 and np.nanmean(ym) < 0.05:
+            prob = prob_from_latent
+        else:
+            prob = prob_from_y_mean
+    else:
+        raise ValueError(f"Unsupported probability_source: {probability_source}")
+
     return {
         "prob": prob,
+        "prob_from_latent_probit": prob_from_latent,
+        "prob_from_y_mean": prob_from_y_mean,
         "raw_y_mean": ym,
         "y_var": ys2,
         "latent_mean": fm,
@@ -231,6 +269,43 @@ def standardize_features(
     return (X_train - mean) / std, (X_test - mean) / std
 
 
+def estimate_rbf_kernel_stats(
+    X_train: np.ndarray,
+    X_test: np.ndarray,
+    bandwidth: float,
+    signal_std: float,
+    seed: int,
+    max_points: int = 512,
+) -> dict[str, float]:
+    """Estimate RBF kernel magnitudes on small train/test subsets."""
+    rng = np.random.default_rng(seed)
+    n_train = min(max_points, X_train.shape[0])
+    n_test = min(max_points, X_test.shape[0])
+    train_idx = rng.choice(X_train.shape[0], size=n_train, replace=False)
+    test_idx = rng.choice(X_test.shape[0], size=n_test, replace=False)
+
+    Xtr = X_train[train_idx]
+    Xte = X_test[test_idx]
+
+    train_d2 = np.sum((Xtr[:, None, :] - Xtr[None, :, :]) ** 2, axis=2)
+    if n_train > 1:
+        off_diag = train_d2[~np.eye(n_train, dtype=bool)]
+    else:
+        off_diag = train_d2.reshape(-1)
+    test_train_d2 = np.sum((Xte[:, None, :] - Xtr[None, :, :]) ** 2, axis=2)
+
+    scale = signal_std ** 2
+    train_kernel = scale * np.exp(-0.5 * off_diag / (bandwidth ** 2))
+    test_train_kernel = scale * np.exp(-0.5 * test_train_d2 / (bandwidth ** 2))
+
+    return {
+        "rbf_train_offdiag_median": float(np.median(train_kernel)),
+        "rbf_train_offdiag_mean": float(np.mean(train_kernel)),
+        "rbf_test_train_median": float(np.median(test_train_kernel)),
+        "rbf_test_train_mean": float(np.mean(test_train_kernel)),
+    }
+
+
 def prepare_data(
     args: argparse.Namespace,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -301,7 +376,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--kernel-bandwidth",
         type=float,
-        default=1.0,
+        default=20.0,
         help="RBF kernel bandwidth/lengthscale. Must be positive.",
     )
     parser.add_argument(
@@ -313,6 +388,16 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--output-dir", type=str, default="data")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--probability-source",
+        type=str,
+        default="latent-probit",
+        choices=["latent-probit", "y-mean", "auto"],
+        help=(
+            "How to convert pyGPs predictions to P(y=1). "
+            "latent-probit is robust for LA/EP GPC."
+        ),
+    )
     parser.set_defaults(standardize=True)
     return parser.parse_args()
 
@@ -352,6 +437,23 @@ def main() -> None:
     print("Running pyGPs methods:", ", ".join(methods))
     print(f"Kernel bandwidth/lengthscale: {args.kernel_bandwidth}")
     print(f"Kernel signal std: {args.kernel_signal_std}")
+    print(f"Probability source: {args.probability_source}")
+
+    kernel_stats = estimate_rbf_kernel_stats(
+        X_train,
+        X_test,
+        args.kernel_bandwidth,
+        args.kernel_signal_std,
+        args.seed,
+    )
+    print("Estimated RBF kernel magnitudes:")
+    for key, value in kernel_stats.items():
+        print(f"  {key}: {value:.6g}")
+    if kernel_stats["rbf_test_train_mean"] < 1e-6:
+        print(
+            "WARNING: train/test RBF covariances are nearly zero. "
+            "Increase --kernel-bandwidth for standardized high-dimensional embeddings."
+        )
 
     for method in methods:
         fit_model, fit_time = fit_method(
@@ -363,7 +465,7 @@ def main() -> None:
             args.kernel_signal_std,
         )
 
-        pred_test = predict_with_model(fit_model, X_test)
+        pred_test = predict_with_model(fit_model, X_test, args.probability_source)
 
         test_metrics = evaluate_binary_probabilistic_predictions(
             y_true=y_test,
@@ -377,9 +479,14 @@ def main() -> None:
         test_metrics["feature_dim"] = int(X_train.shape[1])
         test_metrics["kernel_bandwidth"] = float(args.kernel_bandwidth)
         test_metrics["kernel_signal_std"] = float(args.kernel_signal_std)
+        test_metrics["probability_source"] = args.probability_source
         test_metrics["prob_min"] = float(np.min(pred_test["prob"]))
         test_metrics["prob_mean"] = float(np.mean(pred_test["prob"]))
         test_metrics["prob_max"] = float(np.max(pred_test["prob"]))
+        test_metrics["raw_y_mean_min"] = float(np.min(pred_test["raw_y_mean"]))
+        test_metrics["raw_y_mean_mean"] = float(np.mean(pred_test["raw_y_mean"]))
+        test_metrics["raw_y_mean_max"] = float(np.max(pred_test["raw_y_mean"]))
+        test_metrics.update(kernel_stats)
 
         all_results[method] = {
             "fit_time": fit_time,
@@ -406,6 +513,8 @@ def main() -> None:
                 "standardize": args.standardize,
                 "kernel_bandwidth": args.kernel_bandwidth,
                 "kernel_signal_std": args.kernel_signal_std,
+                "probability_source": args.probability_source,
+                "kernel_stats": kernel_stats,
                 "methods": all_metrics,
             },
             f,

@@ -27,8 +27,9 @@ export PYTHONNOUSERSITE=1
 #   MAX_TRAIN_SAMPLES    10000
 #   MAX_TEST_SAMPLES     10000
 #   STANDARDIZE          1 | 0                      (default: 1)
-#   KERNEL_BANDWIDTH     1.0
+#   KERNEL_BANDWIDTH     20.0
 #   KERNEL_SIGNAL_STD    1.0
+#   PROBABILITY_SOURCE   latent-probit | y-mean | auto  (default: latent-probit)
 #   OUTPUT_DIR           data
 #   SEED                 42
 
@@ -66,8 +67,9 @@ TEST_SPLIT="${TEST_SPLIT:-test}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-10000}"
 MAX_TEST_SAMPLES="${MAX_TEST_SAMPLES:-10000}"
 STANDARDIZE="${STANDARDIZE:-1}"
-KERNEL_BANDWIDTH="${KERNEL_BANDWIDTH:-1.0}"
+KERNEL_BANDWIDTH="${KERNEL_BANDWIDTH:-20.0}"
 KERNEL_SIGNAL_STD="${KERNEL_SIGNAL_STD:-1.0}"
+PROBABILITY_SOURCE="${PROBABILITY_SOURCE:-latent-probit}"
 OUTPUT_DIR="${OUTPUT_DIR:-data}"
 SEED="${SEED:-42}"
 
@@ -162,6 +164,7 @@ echo "Max test samples  : ${MAX_TEST_SAMPLES}"
 echo "Standardize       : ${STANDARDIZE}"
 echo "Kernel bandwidth  : ${KERNEL_BANDWIDTH}"
 echo "Kernel signal std : ${KERNEL_SIGNAL_STD}"
+echo "Probability source: ${PROBABILITY_SOURCE}"
 echo "Output dir        : ${OUTPUT_DIR}"
 echo "Seed              : ${SEED}"
 echo "=============================================================================="
@@ -176,6 +179,7 @@ CMD=(
   "--max-test-samples" "${MAX_TEST_SAMPLES}"
   "--kernel-bandwidth" "${KERNEL_BANDWIDTH}"
   "--kernel-signal-std" "${KERNEL_SIGNAL_STD}"
+  "--probability-source" "${PROBABILITY_SOURCE}"
   "--output-dir" "${OUTPUT_DIR}"
   "--seed" "${SEED}"
 )
