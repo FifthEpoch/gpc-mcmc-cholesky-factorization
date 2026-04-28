@@ -1,11 +1,15 @@
 """
-Experiment 5: ViT-Small classifier trained jointly on PCam + CAMELYON17.
+Experiment 5: ViT-Small classifier for PCam, CAMELYON17, or joint training.
 
 By default this trains *one* ViT-Small model on the union of the two patch
 datasets and writes a single shared checkpoint. After training, the best-
 validation checkpoint is reloaded and evaluated on each test split
 (``pcam``, ``camelyon17``) and on the combined test set, producing a full
 metric report and ROC / calibration plots per split.
+
+You can also train a dataset-specific model with ``--dataset pcam`` or
+``--dataset camelyon17``. In those modes, the model is trained, validated,
+and tested only on that dataset's splits.
 
 Datasets are loaded from:
 - ``datasets/pcam-hg/{train,valid,test}``
@@ -21,6 +25,10 @@ Example:
         --dataset combined --data-root datasets --output-root data/exp5_vit \\
         --epochs 10 --batch-size 64 \\
         --wandb --wandb-project ML-Final_project --wandb-entity a-salt
+
+    python experiments/exp5/exp5_vit_small_random_masking.py \\
+        --dataset pcam --data-root datasets --output-root data/exp5_vit/pcam \\
+        --epochs 10 --batch-size 64
 """
 
 from __future__ import annotations

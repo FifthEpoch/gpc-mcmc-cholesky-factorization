@@ -30,6 +30,7 @@ BATCH_SIZE="${BATCH_SIZE:-32}"
 MASK_RATIO="${MASK_RATIO:-0.0}"   # 0 disables masking; set >0 to enable
 LEARNING_RATE="${LEARNING_RATE:-3e-4}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-0.05}"
+OUTPUT_SUBDIR="${OUTPUT_SUBDIR:-${DATASET}}"
 USE_WANDB="${USE_WANDB:-1}"
 WANDB_PROJECT="${WANDB_PROJECT:-ML-Final_project}"
 WANDB_ENTITY="${WANDB_ENTITY:-a-salt}"
@@ -99,6 +100,7 @@ echo "Batch size     : ${BATCH_SIZE}"
 echo "Mask ratio     : ${MASK_RATIO}"
 echo "Learning rate  : ${LEARNING_RATE}"
 echo "Weight decay   : ${WEIGHT_DECAY}"
+echo "Output subdir  : ${OUTPUT_SUBDIR}"
 echo "Use W&B        : ${USE_WANDB}"
 echo "Project root   : ${PROJECT_ROOT}"
 echo "Conda env      : ${CONDA_ENV}"
@@ -121,7 +123,7 @@ fi
 "${PYTHON}" experiments/exp5/exp5_vit_small_random_masking.py \
   --dataset "${DATASET}" \
   --data-root "${PROJECT_ROOT}/datasets" \
-  --output-root "${PROJECT_ROOT}/data/exp5_vit" \
+  --output-root "${PROJECT_ROOT}/data/exp5_vit/${OUTPUT_SUBDIR}" \
   --epochs "${EPOCHS}" \
   --eval-test-every "${EVAL_TEST_EVERY}" \
   --batch-size "${BATCH_SIZE}" \
