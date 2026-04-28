@@ -440,6 +440,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--num-epochs", type=int, default=50)
     parser.add_argument("--learning-rate", type=float, default=0.01)
+    parser.add_argument(
+        "--lengthscale",
+        type=float,
+        default=None,
+        help=(
+            "Initial RBF lengthscale. If omitted, uses sqrt(feature_dim), "
+            "which is usually more stable for standardized high-dimensional embeddings."
+        ),
+    )
+    parser.add_argument(
+        "--outputscale",
+        type=float,
+        default=1.0,
+        help="Initial RBF outputscale.",
+    )
 
     parser.add_argument("--max-train", type=int, default=None)
     parser.add_argument("--max-valid", type=int, default=None)
@@ -536,6 +551,16 @@ def main() -> None:
     X_cpu = torch.tensor(train.X, dtype=torch.float32)
     y_cpu = torch.tensor(train.y, dtype=torch.float32)
 
+    input_dim = int(train.X.shape[1])
+    initial_lengthscale = (
+        float(args.lengthscale)
+        if args.lengthscale is not None
+        else float(np.sqrt(input_dim))
+    )
+
+    print(f"  initial lengthscale: {initial_lengthscale:.6f}")
+    print(f"  initial outputscale : {float(args.outputscale):.6f}")
+
     class SVGPBinaryClassifier(gpytorch.models.ApproximateGP):
         def __init__(self, inducing_points):
             variational_distribution = (
@@ -556,6 +581,12 @@ def main() -> None:
             self.mean_module = gpytorch.means.ConstantMean()
             self.covar_module = gpytorch.kernels.ScaleKernel(
                 gpytorch.kernels.RBFKernel()
+            )
+            self.covar_module.base_kernel.initialize(
+                lengthscale=inducing_points.new_tensor([initial_lengthscale])
+            )
+            self.covar_module.initialize(
+                outputscale=inducing_points.new_tensor([float(args.outputscale)])
             )
 
         def forward(self, x):
@@ -702,6 +733,8 @@ def main() -> None:
         batch_size=args.batch_size,
         num_epochs=args.num_epochs,
         learning_rate=args.learning_rate,
+        lengthscale=float(initial_lengthscale),
+        outputscale=float(args.outputscale),
         train_time=float(train_time),
         prediction_time=float(pred_time),
         final_loss=float(epoch_losses[-1]) if epoch_losses else float("nan"),

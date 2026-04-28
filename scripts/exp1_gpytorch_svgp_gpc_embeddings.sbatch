@@ -29,6 +29,7 @@ export PYTHONNOUSERSITE=1
 #   BATCH_SIZE         1024
 #   NUM_EPOCHS         50
 #   LEARNING_RATE      0.01
+#   LENGTHSCALE        empty means sqrt(feature_dim)
 #   MAX_TRAIN          empty means full train split
 #   MAX_VALID          empty means full valid split
 #   MAX_TEST           empty means full test split
@@ -76,6 +77,7 @@ NUM_INDUCING="${NUM_INDUCING:-512}"
 BATCH_SIZE="${BATCH_SIZE:-1024}"
 NUM_EPOCHS="${NUM_EPOCHS:-50}"
 LEARNING_RATE="${LEARNING_RATE:-0.01}"
+LENGTHSCALE="${LENGTHSCALE:-}"
 MAX_TRAIN="${MAX_TRAIN:-}"
 MAX_VALID="${MAX_VALID:-}"
 MAX_TEST="${MAX_TEST:-}"
@@ -174,6 +176,7 @@ echo "Num inducing   : ${NUM_INDUCING}"
 echo "Batch size     : ${BATCH_SIZE}"
 echo "Num epochs     : ${NUM_EPOCHS}"
 echo "Learning rate  : ${LEARNING_RATE}"
+echo "Lengthscale    : ${LENGTHSCALE:-auto}"
 echo "Max train      : ${MAX_TRAIN:-full}"
 echo "Max valid      : ${MAX_VALID:-full}"
 echo "Max test       : ${MAX_TEST:-full}"
@@ -206,6 +209,9 @@ if [ -n "${LABEL_FILE}" ]; then
 fi
 if [ -n "${MAX_TRAIN}" ]; then
   CMD+=("--max-train" "${MAX_TRAIN}")
+fi
+if [ -n "${LENGTHSCALE}" ]; then
+  CMD+=("--lengthscale" "${LENGTHSCALE}")
 fi
 if [ -n "${MAX_VALID}" ]; then
   CMD+=("--max-valid" "${MAX_VALID}")
