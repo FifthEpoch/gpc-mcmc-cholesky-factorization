@@ -102,6 +102,19 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Randomly subsample test data to this size for quick tests.",
     )
+    parser.add_argument(
+        "--stratified-subsample-test",
+        action="store_true",
+        help=(
+            "Use the same stratified test subsampling policy as exp1 full HMC "
+            "(seed + 1)."
+        ),
+    )
+    parser.add_argument(
+        "--standardize-from-factor",
+        action="store_true",
+        help="Apply factor_dir/train_mean.npy and train_std.npy to test embeddings.",
+    )
     parser.add_argument("--output-dir", type=str, default="data")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
@@ -343,6 +356,34 @@ def _subsample_rows(rng, size, *arrays):
     return tuple(arr[idx] for arr in arrays)
 
 
+def stratified_subsample(
+    X: np.ndarray,
+    y: np.ndarray,
+    max_n: int | None,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Same stratified random subsample policy as exp1 full-HMC embeddings."""
+    if max_n is None or len(y) <= max_n:
+        idx = np.arange(len(y))
+        return X, y, idx
+
+    rng = np.random.default_rng(seed)
+    pos = np.where(y == 1)[0]
+    neg = np.where(y == 0)[0]
+    frac_pos = len(pos) / len(y)
+    n_pos = max(1, int(round(max_n * frac_pos)))
+    n_neg = max_n - n_pos
+
+    idx = np.concatenate(
+        [
+            rng.choice(pos, size=min(n_pos, len(pos)), replace=False),
+            rng.choice(neg, size=min(n_neg, len(neg)), replace=False),
+        ]
+    )
+    rng.shuffle(idx)
+    return X[idx], y[idx], idx
+
+
 def main():
     wall_t0 = time.perf_counter()
     args = parse_args()
@@ -389,6 +430,20 @@ def main():
     y_train = np.load(factor_dir / "labels.npy").astype(np.float32, copy=False).squeeze()
     X_test = np.load(args.test_embeddings).astype(np.float32, copy=False)
     y_test = np.load(args.test_labels).astype(np.float32, copy=False).squeeze()
+
+    if args.standardize_from_factor:
+        mean_path = factor_dir / "train_mean.npy"
+        std_path = factor_dir / "train_std.npy"
+        if not mean_path.exists() or not std_path.exists():
+            raise FileNotFoundError(
+                "--standardize-from-factor requires train_mean.npy and "
+                f"train_std.npy under {factor_dir}."
+            )
+        train_mean = np.load(mean_path).astype(np.float32, copy=False)
+        train_std = np.load(std_path).astype(np.float32, copy=False)
+        X_test = ((X_test - train_mean) / train_std).astype(np.float32, copy=False)
+        print(f"Standardized test embeddings using {mean_path} and {std_path}")
+
     F = np.load(factor_dir / f"factor_k{args.k}.npy").astype(np.float64, copy=False)
     pivots_path = factor_dir / f"pivots_k{args.k}.npy"
     if not pivots_path.exists():
@@ -432,9 +487,21 @@ def main():
             "predictions may be inconsistent with the HMC training model."
         )
 
-    rng = np.random.default_rng(args.seed)
+    test_idx = np.arange(X_test.shape[0])
     if args.subsample_test is not None:
-        X_test, y_test = _subsample_rows(rng, args.subsample_test, X_test, y_test)
+        if args.stratified_subsample_test:
+            X_test, y_test, test_idx = stratified_subsample(
+                X_test,
+                y_test,
+                args.subsample_test,
+                args.seed + 1,
+            )
+        else:
+            rng = np.random.default_rng(args.seed)
+            test_idx = np.sort(
+                rng.choice(X_test.shape[0], size=args.subsample_test, replace=False)
+            )
+            X_test, y_test = X_test[test_idx], y_test[test_idx]
 
     assert X_test.shape[0] == y_test.shape[0]
 
@@ -558,6 +625,8 @@ def main():
                 "n_leapfrog": args.n_leapfrog,
                 "n_conditional_draws": 1,
                 "prediction_batch_size": args.prediction_batch_size,
+                "stratified_subsample_test": args.stratified_subsample_test,
+                "standardize_from_factor": args.standardize_from_factor,
                 "seed": args.seed,
                 "metrics": test_metrics,
             },
@@ -584,6 +653,7 @@ def main():
         latent_q50=pred_summary["latent_q50"],
         latent_q95=pred_summary["latent_q95"],
         y_test=y_test,
+        test_indices=test_idx,
         accept_rate=hmc_stats["accept_rate"],
         tau_nu=tau_nu,
         tau_logp=tau_logp,

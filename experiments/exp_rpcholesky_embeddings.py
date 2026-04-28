@@ -45,9 +45,33 @@ from my_cholesky.matrix import KernelMatrix  # noqa: E402
 from my_cholesky.arpcholesky import arpcholesky  # noqa: E402
 
 
+def stratified_subsample_indices(y: np.ndarray, max_n: int, seed: int) -> np.ndarray:
+    """Same stratified random subsample policy as exp1 full-HMC embeddings."""
+    rng = np.random.default_rng(seed)
+    y = np.asarray(y).reshape(-1)
+    pos = np.where(y == 1)[0]
+    neg = np.where(y == 0)[0]
+    frac_pos = len(pos) / len(y)
+    n_pos = max(1, int(round(max_n * frac_pos)))
+    n_neg = max_n - n_pos
+
+    idx = np.concatenate(
+        [
+            rng.choice(pos, size=min(n_pos, len(pos)), replace=False),
+            rng.choice(neg, size=min(n_neg, len(neg)), replace=False),
+        ]
+    )
+    rng.shuffle(idx)
+    return idx
+
+
 def load_embeddings(
-    emb_path: Path, lbl_path: Path | None, subsample: int | None, seed: int
-) -> tuple[np.ndarray, np.ndarray | None]:
+    emb_path: Path,
+    lbl_path: Path | None,
+    subsample: int | None,
+    seed: int,
+    stratified_subsample: bool,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
     """Load embeddings (and optional labels) from .npy files."""
     X = np.load(emb_path).astype(np.float32, copy=False)
     y = np.load(lbl_path) if lbl_path is not None else None
@@ -56,15 +80,29 @@ def load_embeddings(
     print(f"Loaded embeddings: {X.shape}  dtype={X.dtype}")
     if y is not None:
         print(f"Loaded labels:     {y.shape}  dtype={y.dtype}")
+    idx = np.arange(X.shape[0])
     if subsample is not None and subsample < X.shape[0]:
-        rng = np.random.default_rng(seed)
-        idx = rng.choice(X.shape[0], size=subsample, replace=False)
-        idx.sort()  # keep label order stable for downstream convenience
+        if stratified_subsample:
+            if y is None:
+                raise ValueError("--stratified-subsample requires --labels.")
+            idx = stratified_subsample_indices(y, subsample, seed)
+        else:
+            rng = np.random.default_rng(seed)
+            idx = rng.choice(X.shape[0], size=subsample, replace=False)
+            idx.sort()  # keep label order stable for downstream convenience
         X = X[idx]
         if y is not None:
             y = y[idx]
         print(f"Subsampled to:     {X.shape}")
-    return X, y
+    return X, y, idx
+
+
+def standardize_features(X: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Standardize selected train features using their own moments."""
+    mean = X.mean(axis=0, keepdims=True)
+    std = X.std(axis=0, keepdims=True)
+    std[std < 1e-8] = 1.0
+    return ((X - mean) / std).astype(np.float32, copy=False), mean, std
 
 
 def build_kernel_matrix(
@@ -133,7 +171,18 @@ def main() -> None:
     # 1. Load data
     emb_path = Path(args.embeddings)
     lbl_path = Path(args.labels) if args.labels else None
-    X, y = load_embeddings(emb_path, lbl_path, args.subsample, args.seed)
+    X, y, selected_indices = load_embeddings(
+        emb_path,
+        lbl_path,
+        args.subsample,
+        args.seed,
+        args.stratified_subsample,
+    )
+    train_mean = np.zeros((1, X.shape[1]), dtype=np.float32)
+    train_std = np.ones((1, X.shape[1]), dtype=np.float32)
+    if args.standardize:
+        X, train_mean, train_std = standardize_features(X)
+        print("Standardized selected train embeddings with train-set moments.")
 
     # 2. Build the lazy kernel matrix
     A = build_kernel_matrix(X, kernel=args.kernel, bandwidth=args.bandwidth)
@@ -171,6 +220,17 @@ def main() -> None:
     np.save(emb_out, X.astype(np.float32, copy=False))
     print(f"\nSaved embeddings: {emb_out}")
 
+    idx_out = out_dir / "indices.npy"
+    np.save(idx_out, selected_indices.astype(np.int64, copy=False))
+    print(f"Saved selected indices: {idx_out}")
+
+    if args.standardize:
+        mean_out = out_dir / "train_mean.npy"
+        std_out = out_dir / "train_std.npy"
+        np.save(mean_out, train_mean.astype(np.float32, copy=False))
+        np.save(std_out, train_std.astype(np.float32, copy=False))
+        print(f"Saved train mean/std: {mean_out}, {std_out}")
+
     if y is not None:
         lbl_out = out_dir / "labels.npy"
         np.save(lbl_out, y)
@@ -188,6 +248,11 @@ def main() -> None:
         "block_size": int(args.block_size),
         "stoptol": float(args.stoptol),
         "subsample": args.subsample,
+        "stratified_subsample": bool(args.stratified_subsample),
+        "standardize": bool(args.standardize),
+        "indices_path": str(idx_out),
+        "train_mean_path": str(out_dir / "train_mean.npy") if args.standardize else None,
+        "train_std_path": str(out_dir / "train_std.npy") if args.standardize else None,
         "seed": int(args.seed),
         "runs": all_stats,
     }
@@ -218,6 +283,16 @@ def parse_args() -> argparse.Namespace:
                    help="Optional path to .npy label file of shape (N,).")
     p.add_argument("--subsample", type=int, default=None,
                    help="If set, randomly subsample N down to this many rows.")
+    p.add_argument(
+        "--stratified-subsample",
+        action="store_true",
+        help="Use the same stratified subsampling policy as exp1 full HMC.",
+    )
+    p.add_argument(
+        "--standardize",
+        action="store_true",
+        help="Standardize selected train embeddings before factorization and save mean/std.",
+    )
     p.add_argument("--kernel", type=str, default="gaussian",
                    choices=["gaussian", "matern", "laplace"])
     p.add_argument("--bandwidth", type=str, default="approx_median",
