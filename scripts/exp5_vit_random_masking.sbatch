@@ -23,6 +23,12 @@ fi
 SCRATCH_BASE="/scratch/${NETID}"
 PROJECT_ROOT="${PROJECT_ROOT:-${SCRATCH_BASE}/gpc-mcmc-cholesky-factorization}"
 CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
+# Submit examples:
+#   sbatch --export=ALL,NETID=sd6701,DATASET=pcam scripts/exp5_vit_random_masking.sbatch
+#   sbatch --export=ALL,NETID=sd6701,DATASET=camelyon17 scripts/exp5_vit_random_masking.sbatch
+#   sbatch --export=ALL,NETID=sd6701,DATASET=combined scripts/exp5_vit_random_masking.sbatch
+#
+# DATASET controls both training data and the default output subdirectory.
 DATASET="${DATASET:-combined}"   # one of: pcam, camelyon17, combined (joint training)
 EPOCHS="${EPOCHS:-30}"
 EVAL_TEST_EVERY="${EVAL_TEST_EVERY:-10}"   # snapshot test metrics every N epochs (0 disables)
