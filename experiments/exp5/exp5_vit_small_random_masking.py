@@ -32,6 +32,7 @@ import math
 import os
 import random
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -214,6 +215,7 @@ def maybe_init_wandb(
     args: argparse.Namespace,
     sources: list[str],
     output_dir: Path,
+    run_id: str,
     n_train: int,
     n_valid: int,
     n_test_per_source: dict[str, int],
@@ -230,11 +232,11 @@ def maybe_init_wandb(
 
     sources_label = "+".join(sources)
     if args.wandb_run_name:
-        run_name = args.wandb_run_name
+        run_name = f"{args.wandb_run_name}-{run_id}"
     elif args.mask_ratio > 0.0:
-        run_name = f"exp5-vit-mask{args.mask_ratio:g}-{sources_label}"
+        run_name = f"exp5-vit-mask{args.mask_ratio:g}-{sources_label}-{run_id}"
     else:
-        run_name = f"exp5-vit-{sources_label}"
+        run_name = f"exp5-vit-{sources_label}-{run_id}"
 
     architecture_label = (
         f"ViT-Small (random patch masking, mask_ratio={args.mask_ratio:g})"
@@ -244,6 +246,7 @@ def maybe_init_wandb(
     config = sanitize_for_json(
         {
             **vars(args),
+            "run_id": run_id,
             "dataset_sources": sources,
             "device": str(device),
             "train_samples": n_train,
@@ -678,8 +681,11 @@ def run_experiment(args: argparse.Namespace, device: torch.device) -> None:
     experiment_start = datetime.now().astimezone()
     experiment_start_ts = perf_counter()
 
-    output_dir = args.output_root
+    run_id = uuid.uuid4().hex[:8]
+    output_dir = args.output_root.parent / f"{args.output_root.name}_{run_id}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Run ID         : {run_id}")
+    print(f"Output dir     : {output_dir}")
 
     if args.dataset == "combined":
         sources = ["pcam", "camelyon17"]
@@ -717,7 +723,7 @@ def run_experiment(args: argparse.Namespace, device: torch.device) -> None:
     print("==============================================================================")
 
     wandb_run = maybe_init_wandb(
-        args, sources, output_dir,
+        args, sources, output_dir, run_id,
         n_train=len(train_records), n_valid=len(valid_records),
         n_test_per_source=n_test_per_source, device=device,
     )
@@ -933,6 +939,8 @@ def run_experiment(args: argparse.Namespace, device: torch.device) -> None:
         save_json(output_dir / f"exp5_{label}_results.json", metrics)
 
     summary_payload = {
+        "run_id": run_id,
+        "output_dir": str(output_dir),
         "dataset_sources": sources,
         "best_epoch": best_epoch,
         "best_val_auroc": (
