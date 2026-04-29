@@ -413,7 +413,10 @@ with tsv_path.open() as f:
             elif key in {"tau_eval_comment", "tau_logp_eval_comment", "npz_path"}:
                 clean[key] = value
             else:
-                clean[key] = float(value)
+                try:
+                    clean[key] = float(value)
+                except ValueError:
+                    clean[key] = value
         rows.append(clean)
 
 if not rows:
