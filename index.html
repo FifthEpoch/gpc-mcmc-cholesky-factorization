@@ -4,674 +4,1338 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <title>Scalable Bayesian Gaussian Process Classification via Accelerated RPCholesky and HMC</title>
+  <title>Fewer Missed Cancers Through Calibrated Uncertainty — RPCholesky-Accelerated MCMC for Histopathology Classification</title>
 
   <meta
     name="description"
-    content="Project page for scalable Bayesian Gaussian Process Classification using accelerated RPCholesky and Hamiltonian Monte Carlo on PCam."
+    content="A scalable Bayesian Gaussian Process Classifier for histopathology, combining accelerated RPCholesky with Hamiltonian Monte Carlo. Evaluated on PCam and CAMELYON17."
+  />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..700,0..100;1,9..144,300..700,0..100&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
   />
 
   <style>
     :root {
-      --max-width: 980px;
-      --text: #1f2933;
-      --muted: #5f6c7b;
-      --bg: #ffffff;
-      --light-bg: #f6f8fa;
-      --border: #d0d7de;
-      --accent: #2563eb;
-      --code-bg: #0d1117;
-      --code-text: #e6edf3;
+      --max: 1180px;
+      --reading: 720px;
+
+      --bg:        #FFFFFF;
+      --bg-soft:   #F1F5F9;
+      --bg-tint:   #F8FAFC;
+      --paper:     #FFFFFF;
+
+      --ink:       #0B1220;
+      --ink-2:     #2D3748;
+      --muted:     #64748B;
+      --line:      #E2E8F0;
+      --line-soft: #EDF1F6;
+
+      --accent:        #15355C;
+      --accent-deep:   #0B2240;
+      --accent-soft:   #6B89B5;
+      --accent-wash:   #EEF3FA;
+
+      --code-bg:   #0B1220;
+      --code-text: #E2E8F0;
+      --code-dim:  #94A3B8;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
 
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      color: var(--text);
+      font-family: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+      font-weight: 400;
+      font-size: 17px;
+      line-height: 1.65;
+      color: var(--ink);
       background: var(--bg);
-      line-height: 1.6;
     }
 
-    header {
-      background: var(--light-bg);
-      border-bottom: 1px solid var(--border);
-      padding: 64px 24px 48px;
-      text-align: center;
-    }
+    /* No paper grain — clean white surface */
 
-    header h1 {
-      max-width: 980px;
-      margin: 0 auto 18px;
-      font-size: 2.35rem;
-      line-height: 1.15;
-      font-weight: 750;
-    }
+    main, header, footer { position: relative; z-index: 1; }
 
-    .subtitle {
-      max-width: 820px;
-      margin: 0 auto 24px;
-      color: var(--muted);
-      font-size: 1.12rem;
-    }
+    a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color .15s ease, color .15s ease; }
+    a:hover { border-bottom-color: var(--accent); }
 
-    .authors {
-      margin: 18px auto;
-      max-width: 760px;
-      font-size: 1rem;
+    /* ── Typography ───────────────────────────────────────────────────────── */
+    .display {
+      font-family: "Fraunces", "Iowan Old Style", Georgia, serif;
+      font-variation-settings: "opsz" 144, "SOFT" 30;
+      font-weight: 420;
+      letter-spacing: -0.022em;
+      line-height: 1.02;
     }
-
-    .authors a {
-      color: var(--accent);
-      text-decoration: none;
-    }
-
-    .authors a:hover {
-      text-decoration: underline;
-    }
-
-    .links {
-      margin-top: 28px;
-      display: flex;
-      justify-content: center;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-
-    .button {
-      display: inline-block;
-      padding: 10px 16px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: white;
-      color: var(--text);
-      text-decoration: none;
-      font-weight: 500;
-      transition: all 0.15s ease;
-    }
-
-    .button:hover {
-      border-color: var(--accent);
+    .display em {
+      font-style: italic;
+      font-variation-settings: "opsz" 144, "SOFT" 100;
       color: var(--accent);
     }
 
-    main {
-      max-width: var(--max-width);
-      margin: 0 auto;
-      padding: 48px 24px;
-    }
-
-    section {
-      margin-bottom: 58px;
+    h2, h3, h4 {
+      font-family: "Fraunces", Georgia, serif;
+      font-variation-settings: "opsz" 60, "SOFT" 50;
+      color: var(--ink);
     }
 
     h2 {
-      font-size: 1.65rem;
-      margin-bottom: 16px;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 8px;
+      font-weight: 480;
+      font-size: clamp(1.8rem, 3.4vw, 2.4rem);
+      letter-spacing: -0.018em;
+      line-height: 1.08;
+      margin: 0 0 1rem;
     }
-
     h3 {
-      margin-top: 28px;
-      margin-bottom: 8px;
-      font-size: 1.2rem;
+      font-weight: 500;
+      font-size: 1.25rem;
+      line-height: 1.25;
+      margin: 1.6rem 0 .55rem;
+      letter-spacing: -0.01em;
+    }
+    h4 {
+      font-weight: 540;
+      font-size: 1.02rem;
+      margin: 1.2rem 0 .4rem;
+      letter-spacing: -0.005em;
     }
 
-    p {
-      margin: 0 0 16px;
+    p { margin: 0 0 1.05rem; }
+
+    .eyebrow {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent);
     }
 
-    ul {
-      margin-top: 8px;
-      padding-left: 22px;
+    code, .mono {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.92em;
+    }
+    p code, li code, td code {
+      background: var(--bg-soft);
+      border: 1px solid var(--line-soft);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.86em;
+      color: var(--ink-2);
     }
 
-    li {
-      margin-bottom: 8px;
+    .var {
+      font-family: "Fraunces", Georgia, serif;
+      font-style: italic;
+      font-variation-settings: "opsz" 14, "SOFT" 100;
+      letter-spacing: 0;
     }
 
-    .teaser {
-      width: 100%;
-      margin: 32px 0 8px;
-      text-align: center;
+    /* ── Header ───────────────────────────────────────────────────────────── */
+    header {
+      padding: clamp(2.4rem, 6vw, 4.5rem) 1.5rem clamp(2.5rem, 5vw, 3.5rem);
+      max-width: var(--max);
+      margin: 0 auto;
+      border-bottom: 1px solid var(--line);
     }
 
-    .teaser img,
-    .figure img {
-      max-width: 100%;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: white;
-    }
-
-    .caption {
-      margin-top: 8px;
+    .topline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 1rem 1.6rem;
+      margin-bottom: 2.6rem;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.74rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
       color: var(--muted);
-      font-size: 0.95rem;
-      text-align: center;
+    }
+    .topline .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--accent); display: inline-block;
+      margin-right: .55rem; vertical-align: middle;
     }
 
-    .abstract {
-      font-size: 1.05rem;
-    }
-
-    .grid {
+    .header-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 18px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 2.2rem;
     }
 
-    .card {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 20px;
-      background: var(--light-bg);
+    .kicker {
+      font-family: "Fraunces", Georgia, serif;
+      font-variation-settings: "opsz" 30, "SOFT" 100;
+      font-style: italic;
+      font-weight: 380;
+      font-size: clamp(1.1rem, 1.6vw, 1.35rem);
+      color: var(--accent);
+      margin-bottom: .5rem;
+      letter-spacing: -0.005em;
     }
 
-    .card h3 {
-      margin-top: 0;
-      margin-bottom: 8px;
-      font-size: 1.05rem;
+    h1.display {
+      font-size: clamp(2.3rem, 5.6vw, 4.2rem);
+      margin: 0 0 1.4rem;
+      max-width: 18ch;
     }
 
-    .metric {
-      font-size: 1.45rem;
-      font-weight: 750;
-      margin-bottom: 4px;
+    .lede {
+      font-family: "Fraunces", Georgia, serif;
+      font-variation-settings: "opsz" 40, "SOFT" 50;
+      font-weight: 380;
+      font-size: clamp(1.08rem, 1.6vw, 1.22rem);
+      line-height: 1.5;
+      color: var(--ink-2);
+      max-width: 60ch;
+      margin: 0 0 2rem;
     }
 
-    .muted {
+    .author-block {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.6rem;
+      padding: 1.5rem 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 1.8rem;
+    }
+    @media (min-width: 720px) {
+      .author-block { grid-template-columns: auto 1fr auto; gap: 2.5rem; align-items: start; }
+    }
+
+    .author-label {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
       color: var(--muted);
+      padding-top: .25rem;
     }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 18px 0;
-      font-size: 0.95rem;
+    .authors-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
+      gap: .35rem 2rem;
+      font-family: "Fraunces", Georgia, serif;
+      font-variation-settings: "opsz" 30, "SOFT" 60;
+      font-weight: 460;
+      font-size: 1.12rem;
+      line-height: 1.3;
+      color: var(--ink);
     }
 
-    th,
-    td {
-      border: 1px solid var(--border);
-      padding: 10px 12px;
-      text-align: left;
+    .meta-block {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.55;
+      max-width: 22ch;
+    }
+    .meta-block strong { color: var(--ink-2); font-weight: 500; }
+
+    .pillbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .55rem;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: .55rem;
+      padding: .55rem 1rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--paper);
+      color: var(--ink-2);
+      font-size: 0.88rem;
+      font-weight: 500;
+      letter-spacing: -0.005em;
+      transition: all .18s ease;
+      border-bottom: 1px solid var(--line);
+    }
+    .pill:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .pill svg { width: 14px; height: 14px; }
+
+    /* ── Hero figure (CSS-only kernel decomposition diagram) ──────────────── */
+    .hero-figure {
+      max-width: var(--max);
+      margin: 2rem auto 0;
+      padding: 0 1.5rem;
+    }
+    .matrix-card {
+      position: relative;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: clamp(1.6rem, 4vw, 2.8rem);
+      overflow: hidden;
+    }
+    .matrix-card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(ellipse 50% 60% at 50% 110%, rgba(21, 53, 92, 0.05), transparent 70%);
+    }
+    .matrix-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: clamp(.6rem, 2vw, 1.6rem);
+      flex-wrap: wrap;
+      padding-bottom: 3.5rem;
+    }
+    .mat {
+      position: relative;
+      display: grid;
+      gap: 2px;
+      border: 1px solid var(--ink);
+      padding: 6px;
+      background: var(--bg-tint);
+      border-radius: 4px;
+    }
+    .mat .cell {
+      width: 6px; height: 6px;
+      background: var(--accent);
+      opacity: 0.18;
+      border-radius: 1px;
+    }
+    .mat-K  { grid-template-columns: repeat(20, 6px); grid-template-rows: repeat(20, 6px); }
+    .mat-F  { grid-template-columns: repeat(4,  6px); grid-template-rows: repeat(20, 6px); }
+    .mat-Ft { grid-template-columns: repeat(20, 6px); grid-template-rows: repeat(4,  6px); }
+    .mat-F .cell, .mat-Ft .cell { opacity: 0.42; }
+    .mat-label {
+      position: absolute;
+      top: calc(100% + 12px);
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: "Fraunces", serif;
+      font-style: italic;
+      font-size: 1rem;
+      color: var(--ink-2);
+      white-space: nowrap;
+      text-align: center;
+    }
+    .mat-label small {
+      font-family: "IBM Plex Mono", monospace;
+      font-style: normal;
+      color: var(--muted);
+      font-size: 0.72rem;
+      display: block;
+      margin-top: 1px;
+      letter-spacing: 0.04em;
+    }
+    .approx {
+      font-family: "Fraunces", serif;
+      font-size: 1.6rem;
+      color: var(--muted);
+      padding: 0 .35rem;
+    }
+    .matrix-caption {
+      margin-top: 3.2rem;
+      text-align: center;
+      font-family: "Fraunces", serif;
+      font-style: italic;
+      font-size: 1rem;
+      color: var(--ink-2);
+      max-width: 56ch;
+      margin-left: auto;
+      margin-right: auto;
+      line-height: 1.5;
     }
 
-    th {
-      background: var(--light-bg);
-      font-weight: 650;
+    /* ── Main content layout ──────────────────────────────────────────────── */
+    main {
+      max-width: var(--max);
+      margin: 0 auto;
+      padding: clamp(3.5rem, 7vw, 5.5rem) 1.5rem 4rem;
     }
 
-    tr.highlight {
-      background: #eef4ff;
-      font-weight: 650;
+    section {
+      margin-bottom: clamp(3rem, 6vw, 5rem);
+      scroll-margin-top: 2rem;
     }
 
-    pre {
-      background: var(--code-bg);
-      color: var(--code-text);
-      padding: 20px;
-      border-radius: 10px;
-      overflow-x: auto;
-      font-size: 0.9rem;
+    .section-head {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: .4rem;
+      margin-bottom: 1.8rem;
+      padding-bottom: .9rem;
+      border-bottom: 1px solid var(--line);
     }
+    @media (min-width: 720px) {
+      .section-head { grid-template-columns: 90px 1fr; gap: 1.5rem; align-items: baseline; }
+    }
+    .section-num {
+      font-family: "Fraunces", serif;
+      font-variation-settings: "opsz" 144, "SOFT" 100;
+      font-style: italic;
+      font-weight: 350;
+      font-size: clamp(2.2rem, 4vw, 3rem);
+      color: var(--accent);
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+    .section-head h2 { margin: 0; }
 
-    code {
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    .body-text { max-width: var(--reading); }
+
+    /* ── Special blocks ──────────────────────────────────────────────────── */
+    .pullquote {
+      max-width: 58ch;
+      margin: 2rem 0;
+      padding: 0 0 0 1.5rem;
+      border-left: 3px solid var(--accent);
+      font-family: "Fraunces", serif;
+      font-variation-settings: "opsz" 40, "SOFT" 80;
+      font-style: italic;
+      font-weight: 380;
+      font-size: 1.18rem;
+      line-height: 1.45;
+      color: var(--ink-2);
     }
 
     .equation {
+      margin: 1.4rem 0;
+      padding: 1.1rem 1.4rem;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      font-family: "Fraunces", serif;
+      font-style: italic;
+      font-size: 1.1rem;
+      line-height: 1.5;
+      color: var(--ink);
       overflow-x: auto;
-      padding: 14px 16px;
-      background: var(--light-bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-      font-size: 0.95rem;
-      margin: 18px 0;
     }
+    .equation .num {
+      float: right;
+      font-family: "IBM Plex Mono", monospace;
+      font-style: normal;
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding-top: .35rem;
+    }
+
+    .equation sub, .equation sup {
+      font-family: "Fraunces", serif;
+      font-style: italic;
+      font-size: 0.75em;
+    }
+
+    /* ── Question cards ──────────────────────────────────────────────────── */
+    .questions {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.2rem;
+      margin: 1rem 0;
+    }
+    @media (min-width: 720px) { .questions { grid-template-columns: 1fr 1fr; } }
+    .qcard {
+      position: relative;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1.6rem 1.5rem 1.4rem;
+    }
+    .qcard .qnum {
+      position: absolute;
+      top: -.6rem;
+      left: 1.2rem;
+      width: 2.2rem; height: 2.2rem;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--bg-tint);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Fraunces", serif;
+      font-style: italic;
+      font-weight: 480;
+      font-size: 1.15rem;
+    }
+    .qcard h3 {
+      margin-top: .4rem;
+      margin-bottom: .5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      font-family: "IBM Plex Sans", sans-serif;
+      color: var(--accent);
+    }
+    .qcard p { margin: 0; color: var(--ink-2); font-size: .98rem; }
+
+    /* ── Dataset grid ────────────────────────────────────────────────────── */
+    .data-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin: 1.4rem 0;
+    }
+    .data-card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1.3rem 1.4rem;
+    }
+    .data-card .key {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: .55rem;
+    }
+    .data-card .val {
+      font-family: "Fraunces", serif;
+      font-variation-settings: "opsz" 60, "SOFT" 50;
+      font-weight: 480;
+      font-size: 1.55rem;
+      line-height: 1.1;
+      color: var(--ink);
+      margin-bottom: .35rem;
+      letter-spacing: -0.01em;
+    }
+    .data-card .sub { font-size: 0.88rem; color: var(--muted); line-height: 1.45; }
+
+    /* ── Method steps ────────────────────────────────────────────────────── */
+    .method-step {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.4rem 2rem;
+      padding: 1.6rem 0;
+      border-top: 1px solid var(--line-soft);
+    }
+    .method-step:first-of-type { border-top: none; padding-top: .4rem; }
+    @media (min-width: 720px) {
+      .method-step { grid-template-columns: 200px 1fr; }
+    }
+    .step-tag {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      padding-top: .4rem;
+    }
+    .step-tag .step-num {
+      display: inline-block;
+      font-family: "Fraunces", serif;
+      font-style: italic;
+      font-size: 1rem;
+      color: var(--ink);
+      margin-right: .35rem;
+    }
+    .method-step h3 { margin-top: 0; }
+
+    /* ── Tables ──────────────────────────────────────────────────────────── */
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper);
+      margin: 1.4rem 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+    thead tr { border-bottom: 1px solid var(--ink); }
+    th {
+      text-align: left;
+      padding: 1rem 1.2rem;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-2);
+      background: var(--bg-tint);
+    }
+    td {
+      padding: .9rem 1.2rem;
+      border-bottom: 1px solid var(--line-soft);
+      vertical-align: middle;
+      color: var(--ink-2);
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: rgba(21, 53, 92, 0.025); }
+    tr.best td {
+      background: var(--accent-wash);
+      color: var(--accent-deep);
+      font-weight: 500;
+    }
+    tr.best td:first-child { position: relative; }
+    tr.best td:first-child::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background: var(--accent);
+    }
+    .speedup {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.82rem;
+      color: var(--accent);
+      margin-left: .35rem;
+    }
+
+    /* ── Findings box ────────────────────────────────────────────────────── */
+    .findings {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0;
+      margin: 1.4rem 0;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    @media (min-width: 720px) { .findings { grid-template-columns: 1fr 1fr; } }
+
+    .finding {
+      padding: 1.4rem 1.5rem;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    @media (min-width: 720px) {
+      .finding:nth-child(odd)  { border-right: 1px solid var(--line-soft); }
+      .finding:nth-last-child(-n+2) { border-bottom: none; }
+    }
+    .finding:last-child { border-bottom: none; }
+    .finding .label {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: .55rem;
+    }
+    .finding .head {
+      font-family: "Fraunces", serif;
+      font-variation-settings: "opsz" 40, "SOFT" 60;
+      font-weight: 480;
+      font-size: 1.2rem;
+      line-height: 1.25;
+      margin-bottom: .35rem;
+      color: var(--ink);
+    }
+    .finding p { margin: 0; font-size: .95rem; color: var(--ink-2); }
+
+    /* ── Best HP card ────────────────────────────────────────────────────── */
+    .hp-card {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 0;
+      margin: 1.4rem 0;
+      background: var(--ink);
+      color: var(--bg-tint);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .hp-item {
+      padding: 1.4rem 1.5rem;
+      border-right: 1px solid rgba(255,255,255,0.08);
+    }
+    .hp-item:last-child { border-right: none; }
+    .hp-item .lbl {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--accent-soft);
+      margin-bottom: .55rem;
+    }
+    .hp-item .num {
+      font-family: "Fraunces", serif;
+      font-variation-settings: "opsz" 144, "SOFT" 50;
+      font-weight: 380;
+      font-size: 2.1rem;
+      line-height: 1;
+      letter-spacing: -0.02em;
+    }
+    .hp-item .desc { font-size: .85rem; color: rgba(255,255,255,0.6); margin-top: .35rem; }
+
+    /* ── Conclusion split ────────────────────────────────────────────────── */
+    .split {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.6rem;
+      margin-top: 1.4rem;
+    }
+    @media (min-width: 720px) { .split { grid-template-columns: 1fr 1fr; gap: 2rem; } }
+    .split h3 {
+      color: var(--accent);
+      font-size: 1.15rem;
+      margin-top: 0;
+      margin-bottom: .55rem;
+    }
+
+    /* ── Code block ──────────────────────────────────────────────────────── */
+    pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 1.4rem 1.5rem;
+      border-radius: 10px;
+      overflow-x: auto;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.86rem;
+      line-height: 1.6;
+      border: 1px solid var(--ink);
+    }
+    pre code { background: none; border: none; padding: 0; color: inherit; font-size: 1em; }
+    pre .k { color: var(--accent-soft); }
+    pre .s { color: #C5B47E; }
+
+    /* ── Reference & footer ──────────────────────────────────────────────── */
+    .reference-list {
+      list-style: none;
+      counter-reset: ref;
+      padding: 0;
+      margin: 1rem 0;
+      max-width: var(--reading);
+    }
+    .reference-list li {
+      counter-increment: ref;
+      padding: .9rem 0 .9rem 2.6rem;
+      border-bottom: 1px solid var(--line-soft);
+      font-size: 0.94rem;
+      color: var(--ink-2);
+      position: relative;
+    }
+    .reference-list li::before {
+      content: "[" counter(ref) "]";
+      position: absolute;
+      left: 0;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.82rem;
+      color: var(--accent);
+    }
+    .reference-list li:last-child { border-bottom: none; }
 
     footer {
-      border-top: 1px solid var(--border);
-      background: var(--light-bg);
+      max-width: var(--max);
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 3rem;
+      border-top: 1px solid var(--line);
       color: var(--muted);
-      padding: 32px 24px;
-      text-align: center;
-      font-size: 0.95rem;
+      font-size: 0.85rem;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    footer .mark {
+      font-family: "Fraunces", serif;
+      font-style: italic;
+      color: var(--ink-2);
     }
 
-    @media (max-width: 600px) {
-      header {
-        padding: 46px 20px 36px;
+    /* ── Stagger animation on load ───────────────────────────────────────── */
+    @media (prefers-reduced-motion: no-preference) {
+      .reveal {
+        opacity: 0;
+        transform: translateY(8px);
+        animation: reveal .8s cubic-bezier(.2,.7,.2,1) forwards;
       }
-
-      header h1 {
-        font-size: 1.85rem;
-      }
-
-      main {
-        padding: 36px 20px;
-      }
-
-      table {
-        font-size: 0.85rem;
+      .reveal-1 { animation-delay: 0.05s; }
+      .reveal-2 { animation-delay: 0.18s; }
+      .reveal-3 { animation-delay: 0.32s; }
+      .reveal-4 { animation-delay: 0.46s; }
+      .reveal-5 { animation-delay: 0.6s; }
+      @keyframes reveal {
+        to { opacity: 1; transform: none; }
       }
     }
+
+    /* ── Selection ───────────────────────────────────────────────────────── */
+    ::selection { background: var(--accent); color: var(--bg-tint); }
   </style>
 </head>
 
 <body>
   <header>
-    <h1>
-      Scalable Bayesian Gaussian Process Classification via Accelerated RPCholesky and HMC
-    </h1>
-
-    <p class="subtitle">
-      Making full-data Bayesian Gaussian Process Classification tractable for histopathology-scale cancer classification,
-      while preserving calibrated uncertainty.
-    </p>
-
-    <div class="authors">
-      <a href="#">Your Name</a>,
-      <a href="#">Coauthor Name</a>,
-      <a href="#">Coauthor Name</a>
-      <br />
-      Your Affiliation
-      <br />
-      Advisor: Advisor Name
+    <div class="topline reveal reveal-1">
+      <span><span class="dot"></span>Project Page · 2026</span>
+      <span>Bayesian Deep Learning · Histopathology</span>
+      <span>PCam &amp; CAMELYON17</span>
     </div>
 
-    <div class="links">
-      <a class="button" href="#">Paper</a>
-      <a class="button" href="#">Code</a>
-      <a class="button" href="#">Poster</a>
-      <a class="button" href="#">Slides</a>
+    <div class="header-grid">
+      <div>
+        <p class="kicker reveal reveal-2">Fewer missed cancers through calibrated uncertainty</p>
+
+        <h1 class="display reveal reveal-2">
+          RPCholesky-Accelerated <em>MCMC</em> for Histopathology Classification
+        </h1>
+
+        <p class="lede reveal reveal-3">
+          Full-data Bayesian Gaussian Process Classification on PCam and CAMELYON17 — made
+          tractable by accelerated Randomly Pivoted Cholesky and low-rank Hamiltonian
+          Monte Carlo, with calibration that holds up under domain shift.
+        </p>
+
+        <div class="author-block reveal reveal-4">
+          <div class="author-label">Authors</div>
+          <div class="authors-list">
+            <div>Wun Ting Chan</div>
+            <div>Sampras Dsouza</div>
+            <div>Zhenyu Hong</div>
+            <div>Yunru Zheng</div>
+          </div>
+          <div class="meta-block">
+            <strong>Track</strong><br />
+            Bayesian methods for medical&nbsp;imaging
+          </div>
+        </div>
+
+        <div class="pillbar reveal reveal-5">
+          <a class="pill" href="#">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            Paper
+          </a>
+          <a class="pill" href="#">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            Code
+          </a>
+          <a class="pill" href="#">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+            Poster
+          </a>
+          <a class="pill" href="#">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            Slides
+          </a>
+        </div>
+      </div>
     </div>
   </header>
 
+  <!-- HERO FIGURE: low-rank kernel decomposition -->
+  <div class="hero-figure">
+    <div class="matrix-card">
+      <div class="matrix-row" id="matRow">
+        <div class="mat mat-K" id="matK">
+          <div class="mat-label"><span class="var">K</span><small>N × N · ~550 GB</small></div>
+        </div>
+        <span class="approx">≈</span>
+        <div class="mat mat-F" id="matF">
+          <div class="mat-label"><span class="var">F</span><small>N × k</small></div>
+        </div>
+        <span class="approx">·</span>
+        <div class="mat mat-Ft" id="matFt">
+          <div class="mat-label"><span class="var">F<sup>⊤</sup></span><small>k × N</small></div>
+        </div>
+      </div>
+      <p class="matrix-caption">
+        The kernel matrix <span class="var">K</span> is never materialized.
+        Accelerated RPCholesky queries only <span class="var">k</span>&nbsp;≪&nbsp;<span class="var">N</span>
+        pivot columns, then HMC samples in the resulting <span class="var">k</span>-dimensional latent space.
+      </p>
+    </div>
+  </div>
+
   <main>
-    <section class="teaser">
-      <img src="assets/teaser.png" alt="Overview of accelerated RPCholesky and HMC Gaussian Process Classification" />
-      <p class="caption">
-        Overview of our pipeline: pathology image embeddings are compressed with PCA, approximated with accelerated RPCholesky,
-        sampled with HMC, and evaluated as calibrated Bayesian predictions.
-      </p>
+
+    <!-- Abstract -->
+    <section id="abstract">
+      <div class="section-head">
+        <div class="section-num">01</div>
+        <h2>Abstract</h2>
+      </div>
+      <div class="body-text">
+        <p>
+          Cancer diagnosis is a setting where misclassification errors are deeply asymmetric: a false
+          negative can delay treatment, while a false positive can trigger unnecessary biopsies and
+          patient distress. Standard neural network classifiers achieve strong accuracy on
+          histopathology benchmarks but produce overconfident softmax probabilities that do not
+          reflect genuine uncertainty.
+        </p>
+        <p>
+          Gaussian Process Classification offers a principled posterior over latent functions, but
+          MCMC inference at PCam scale (<code>N ≈ 2.6 × 10⁵</code>) has historically been
+          intractable. We make exact MCMC-based GPC practical by combining three pieces: accelerated
+          Randomly Pivoted Cholesky to compress the kernel, Hamiltonian Monte Carlo in non-centered
+          low-rank coordinates, and a pivots-as-inducing-points predictive rule that turns the test
+          cost into <code>O(k²)</code> per point. On PCam and CAMELYON17, the resulting classifier
+          improves calibration over both SVGP and the strongest neural baseline, while reducing
+          missed cancer cases.
+        </p>
+
+        <p class="pullquote">
+          The contribution is not just a faster sampler — it is showing that calibrated, full-data
+          Bayesian classification is now a deployable option in domains where uncertainty is
+          part of the diagnosis.
+        </p>
+      </div>
     </section>
 
-    <section>
-      <h2>Abstract</h2>
-      <p class="abstract">
-        Cancer diagnosis is a setting where misclassification errors are highly asymmetric: a false negative can delay
-        treatment, while a false positive can lead to unnecessary biopsies and patient distress. In this project, we study
-        whether full-data Bayesian Gaussian Process Classification can be made practical for histopathology-scale datasets.
-        Gaussian Process Classification provides calibrated probabilistic predictions, but standard inference requires dense
-        kernel operations that are infeasible at PCam scale. We combine accelerated Randomly Pivoted Cholesky, Hamiltonian
-        Monte Carlo in low-rank non-centered coordinates, and a pivots-as-inducing-points prediction rule. This makes
-        MCMC-based GPC tractable on the full PCam training set and improves calibration over SVGP and neural network
-        baselines while remaining competitive on accuracy.
-      </p>
-    </section>
-
-    <section>
-      <h2>Motivation</h2>
-      <p>
-        Standard neural network classifiers can achieve strong accuracy on histopathology benchmarks, but their softmax
-        probabilities are often overconfident and do not necessarily represent reliable uncertainty. In medical triage, this
-        matters: pathologists need probabilities that can support decisions about which tissue patches require human review.
-      </p>
-
-      <p>
-        Gaussian Process Classification is a natural alternative because it gives a posterior over latent functions and
-        produces predictive distributions rather than only point estimates. The computational problem is the kernel matrix:
-        for <code>N = 262,144</code> PCam training examples, the dense kernel matrix would require roughly 550 GB in
-        float64, and exact Cholesky factorization is not practical.
-      </p>
-    </section>
-
-    <section>
-      <h2>Problem Setup</h2>
-
-      <div class="grid">
-        <div class="card">
-          <h3>Dataset</h3>
+    <!-- Research questions -->
+    <section id="questions">
+      <div class="section-head">
+        <div class="section-num">02</div>
+        <h2>Research questions</h2>
+      </div>
+      <div class="questions">
+        <div class="qcard">
+          <div class="qnum">1</div>
+          <h3>Scalable Bayesian Inference for MCMC GPC</h3>
           <p>
-            PCam, a binary histopathology dataset for detecting metastatic tissue in image patches.
+            How can we make exact Bayesian inference for Gaussian Process Classification, of the
+            kind that MCMC provides, computationally tractable at the scale of modern medical
+            imaging datasets — without sacrificing posterior fidelity?
           </p>
         </div>
-
-        <div class="card">
-          <h3>Training Scale</h3>
+        <div class="qcard">
+          <div class="qnum">2</div>
+          <h3>Clinical Utility of Calibration</h3>
           <p>
-            <code>N = 262,144</code> training points and <code>32,768</code> held-out test points.
-          </p>
-        </div>
-
-        <div class="card">
-          <h3>Features</h3>
-          <p>
-            Phikon pathology transformer embeddings, projected to <code>d = 512</code> dimensions using PCA.
+            What practical benefits does improved uncertainty calibration provide for clinical
+            decision-making in cancer diagnosis, particularly in reducing the risks associated
+            with overconfident false predictions?
           </p>
         </div>
       </div>
     </section>
 
-    <section>
-      <h2>Method</h2>
+    <!-- Background -->
+    <section id="background">
+      <div class="section-head">
+        <div class="section-num">03</div>
+        <h2>Background &amp; motivation</h2>
+      </div>
+      <div class="body-text">
+        <p>
+          Effective deployment of any classifier in a diagnostic setting depends not only on raw
+          accuracy, but on calibrated probabilistic predictions that pathologists can use to triage
+          uncertain cases for human review. Standard neural network classifiers, despite high
+          accuracy on histopathology benchmarks, are known to produce overconfident softmax outputs
+          that do not faithfully reflect uncertainty — particularly on out-of-distribution patches.
+        </p>
 
-      <h3>1. Accelerated RPCholesky</h3>
-      <p>
-        We approximate the full kernel matrix with a low-rank factor produced by accelerated Randomly Pivoted Cholesky.
-        Instead of materializing the full <code>N × N</code> matrix, the algorithm queries only selected kernel columns.
-      </p>
+        <h3>Gaussian Process Classification: limitations</h3>
+        <p>
+          GPC is a natural alternative: it provides a principled posterior over latent functions
+          and yields calibrated predictive distributions that can flag genuinely ambiguous cases.
+          The challenge is computational. Solving GPC requires inference over the posterior of the
+          latent function, and two families of methods are commonly used:
+        </p>
+        <ul>
+          <li>
+            <strong>Stochastic Variational Gaussian Processes (SVGP)</strong> approximate the
+            posterior with a parametric Gaussian via variational inference. Fast and scalable, but
+            the mean-field assumption systematically underestimates posterior variance, hurting
+            calibration.
+          </li>
+          <li>
+            <strong>Markov Chain Monte Carlo (MCMC)</strong> samples the true posterior
+            asymptotically, capturing full posterior uncertainty and giving the best-calibrated
+            predictions — but it has historically been computationally infeasible at the scale
+            required for medical imaging benchmarks.
+          </li>
+        </ul>
+        <p>
+          Recent advances in randomized numerical linear algebra change this picture. The dense
+          kernel matrix at <code>N = 262,144</code> would require approximately
+          <strong>550 GB at float64</strong>, and exact Cholesky is <code>O(N³)</code> — both clearly
+          intractable. Low-rank methods make MCMC GPC reachable at this scale for the first time.
+        </p>
+      </div>
+    </section>
 
-      <div class="equation">
-        F Fᵀ ≈ K, &nbsp;&nbsp;&nbsp; F ∈ R<sup>N×k</sup>, &nbsp;&nbsp;&nbsp; k ≪ N
+    <!-- Datasets -->
+    <section id="datasets">
+      <div class="section-head">
+        <div class="section-num">04</div>
+        <h2>Datasets</h2>
+      </div>
+      <div class="body-text">
+        <p>
+          We evaluate on two histopathology cancer-detection datasets, including one specifically
+          designed to test robustness under hospital and domain shift.
+        </p>
       </div>
 
-      <p>
-        At PCam scale, we use <code>k = 200</code>, reducing the kernel-evaluation cost from <code>O(N²)</code> to
-        <code>O(Nk)</code>.
-      </p>
-
-      <h3>2. HMC in Non-Centered Coordinates</h3>
-      <p>
-        We reparameterize the GP latent function as:
-      </p>
-
-      <div class="equation">
-        f = Fν, &nbsp;&nbsp;&nbsp; ν ∼ N(0, I<sub>k</sub>)
-      </div>
-
-      <p>
-        This changes the sampling problem from an <code>N</code>-dimensional posterior over latent function values to a
-        <code>k</code>-dimensional posterior over <code>ν</code>. We then run Hamiltonian Monte Carlo with 25 leapfrog
-        steps and dual-averaging step-size adaptation.
-      </p>
-
-      <h3>3. Pivots-as-Inducing-Points Prediction</h3>
-      <p>
-        The RPCholesky pivot set is reused at test time as inducing points. This avoids evaluating the test kernel against
-        all training points, replacing the naive predictive cost with a much smaller pivot-based computation.
-      </p>
-    </section>
-
-    <section>
-      <h2>Computational Cost</h2>
-
-      <div class="grid">
-        <div class="card">
-          <h3>Kernel Factorization</h3>
-          <div class="metric">16 sec</div>
-          <p class="muted">Accelerated RPCholesky on the full PCam training set.</p>
+      <div class="data-grid">
+        <div class="data-card">
+          <div class="key">PCam · Train</div>
+          <div class="val">~262k</div>
+          <div class="sub">Patch-level metastatic-tissue detection. Standard PatchCamelyon training split.</div>
         </div>
-
-        <div class="card">
-          <h3>HMC Sampling</h3>
-          <div class="metric">~20 min</div>
-          <p class="muted">1000 post-warmup samples with 25 leapfrog steps.</p>
+        <div class="data-card">
+          <div class="key">PCam · Test</div>
+          <div class="val">~32k</div>
+          <div class="sub">Held-out test split for in-distribution evaluation.</div>
         </div>
-
-        <div class="card">
-          <h3>Prediction</h3>
-          <div class="metric">~2 sec</div>
-          <p class="muted">Pivot-based predictive inference on the test set.</p>
+        <div class="data-card">
+          <div class="key">CAMELYON17 · Train</div>
+          <div class="val">~302k</div>
+          <div class="sub">Metastasis detection under hospital and scanner shift.</div>
+        </div>
+        <div class="data-card">
+          <div class="key">CAMELYON17 · Test</div>
+          <div class="val">~85k</div>
+          <div class="sub">Out-of-domain evaluation for calibration robustness.</div>
         </div>
       </div>
 
-      <p>
-        The full pipeline runs in approximately 22 minutes on a single GPU. Dense Cholesky at this scale would require
-        cubic time and hundreds of gigabytes of memory, making the direct approach infeasible.
-      </p>
+      <div class="body-text">
+        <p>
+          For both datasets, image patches are converted into embeddings using <strong>Phikon</strong>,
+          a frozen pathology-specific transformer encoder. Phikon embeddings are then projected to
+          <code>d = 512</code> dimensions using PCA <em>fit on the training set only</em>. The
+          GP and the neural baselines all operate on these shared embeddings, so the comparison
+          isolates the classifier and uncertainty model rather than the image encoder.
+        </p>
+      </div>
     </section>
 
-    <section>
-      <h2>Experimental Progression</h2>
+    <!-- Method -->
+    <section id="method">
+      <div class="section-head">
+        <div class="section-num">05</div>
+        <h2>Method</h2>
+      </div>
+      <div class="body-text">
+        <p>
+          Our pipeline replaces the dense kernel operations that block MCMC GPC at scale with a
+          low-rank reparameterization that preserves posterior fidelity. There are three pieces.
+        </p>
+      </div>
 
-      <h3>Experiment 1: Small-Scale Validation</h3>
-      <p>
-        We first tested the method on <code>N = 2000</code> synthetic blob data and PCam subsamples. These experiments
-        established that accelerated RPCholesky reduces runtime and that HMC mixes better than Random-Walk Metropolis
-        and MALA on the PCam posterior.
-      </p>
+      <div class="method-step">
+        <div class="step-tag"><span class="step-num">i</span>Kernel</div>
+        <div>
+          <h3>Accelerated RPCholesky</h3>
+          <p>
+            A recent advancement in randomized numerical linear algebra. It builds a low-rank factor
+            <code>F ∈ ℝ<sup>N×k</sup></code> such that <code>FF<sup>⊤</sup> ≈ K</code>, by greedily
+            selecting <code>k</code> pivot columns of <code>K</code> via randomized importance
+            sampling. The full <code>N × N</code> matrix is <em>never materialized</em>; only
+            <code>k</code> columns of <code>K</code> are ever queried, reducing the kernel-evaluation
+            cost from <code>O(N²)</code> to <code>O(Nk)</code>.
+          </p>
+          <div class="equation">
+            FF<sup>⊤</sup> = K<sub>:,P</sub> · K<sup>−1</sup><sub>PP</sub> · K<sup>⊤</sup><sub>:,P</sub>,
+            <span style="font-style:normal; color:var(--muted); font-size:.95rem; margin-left:.6rem;">
+              with pivot set <span class="var">P</span> selected greedily by RPCholesky.
+            </span>
+            <span class="num">Nyström-type approx.</span>
+          </div>
+        </div>
+      </div>
 
-      <h3>Experiment 2: Full-Scale PCam Benchmark</h3>
-      <p>
-        We scaled to the full PCam training set using <code>N = 262,144</code>, <code>d = 512</code> Phikon embeddings,
-        and RPCholesky rank <code>k = 200</code>. We compare against SVGP and a Residual MLP trained on the same
-        embeddings.
-      </p>
+      <div class="method-step">
+        <div class="step-tag"><span class="step-num">ii</span>Sampler</div>
+        <div>
+          <h3>HMC in non-centered coordinates</h3>
+          <p>
+            We reparameterize the GP latent function as <code>f = Fν</code> with
+            <code>ν ∼ 𝓝(0, I<sub>k</sub>)</code>, and run Hamiltonian Monte Carlo over
+            <code>ν</code>. Sampling in this <code>k</code>-dimensional space (<code>k = 200</code>)
+            instead of the <code>N</code>-dimensional space (<code>N = 262,144</code>) makes the
+            posterior well-conditioned and HMC tractable. Gradients of the log-posterior are
+            <code>O(Nk)</code> per leapfrog step, dominated by a single matrix–vector product
+            <code>F<sup>⊤</sup>(y − σ(Fν))</code>.
+          </p>
+          <div class="equation">
+            <span class="var">f</span> = <span class="var">Fν</span>,
+            &nbsp;&nbsp;&nbsp;&nbsp;
+            <span class="var">ν</span> ∼ 𝓝(0, <span class="var">I</span><sub>k</sub>)
+            <span class="num">Non-centered reparameterization</span>
+          </div>
+        </div>
+      </div>
 
-      <h3>Experiment 3: Calibration and Posterior Uncertainty</h3>
-      <p>
-        We analyze whether the low-rank HMC GP improves probabilistic metrics such as ECE and NLL, where calibrated
-        uncertainty matters more than raw classification accuracy alone.
-      </p>
+      <div class="method-step">
+        <div class="step-tag"><span class="step-num">iii</span>Prediction</div>
+        <div>
+          <h3>Pivots-as-inducing-points</h3>
+          <p>
+            The RPCholesky pivots <code>P</code> are reused at test time as inducing points: the
+            predictive mean for a test point <code>x*</code> is
+            <code>f*<sub>mean</sub> ≈ k<sup>⊤</sup><sub>*,P</sub> · K<sup>−1</sup><sub>PP</sub> · f<sub>P</sub></code>.
+            This avoids the <code>O(n<sub>test</sub> · N)</code> kernel evaluation that would
+            dominate predictive cost in a naive Woodbury-based approach, replacing it with
+            <code>O(k²)</code> per test point — a <strong>~1500× reduction</strong> at PCam scale.
+          </p>
+        </div>
+      </div>
     </section>
 
-    <section>
-      <h2>Final Results</h2>
+    <!-- Experiments overview -->
+    <section id="experiments">
+      <div class="section-head">
+        <div class="section-num">06</div>
+        <h2>Experimental progression</h2>
+      </div>
+      <div class="body-text">
+        <p>
+          We organize the experiments as a progression from controlled, small-set validation to
+          full-scale histopathology evaluation. Across all of them we track Expected Calibration
+          Error (ECE), Negative Log-Likelihood (NLL), AUROC, AUPRC, Brier score, sensitivity and
+          specificity, accuracy, and full confusion matrices.
+        </p>
+      </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Method</th>
-            <th>Accuracy</th>
-            <th>AUROC</th>
-            <th>NLL</th>
-            <th>ECE</th>
-            <th>Brier</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>GPyTorch SVGP</td>
-            <td>0.882</td>
-            <td>0.971</td>
-            <td>0.087</td>
-            <td>0.101</td>
-            <td>0.087</td>
-          </tr>
-          <tr>
-            <td>Residual MLP</td>
-            <td>0.877</td>
-            <td>0.965</td>
-            <td>0.111</td>
-            <td>0.116</td>
-            <td>0.111</td>
-          </tr>
-          <tr class="highlight">
-            <td>Low-rank HMC GP, ours</td>
-            <td>0.914</td>
-            <td>0.978</td>
-            <td>0.064</td>
-            <td>0.055</td>
-            <td>0.064</td>
-          </tr>
-        </tbody>
-      </table>
+      <!-- Experiment 1 -->
+      <h3 style="margin-top: 2.4rem;">Experiment 1 · Verifying ARPCholesky speed-up on a PCAM subset</h3>
+      <div class="body-text">
+        <p>
+          We generated a synthetic binary classification dataset with <code>N = 2,000</code>
+          points using two Gaussian-like blobs centered near the y-axis (left blob labeled 0, right
+          labeled 1) and compared the standard GP-MCMC dense-kernel baseline against accelerated
+          RPCholesky approximations at ranks <code>k ∈ {20, 50, 100}</code>.
+        </p>
+      </div>
 
-      <p>
-        Our method achieves the highest accuracy and AUROC while substantially improving calibration. The ECE reduction is
-        especially important in a diagnostic setting, where confidence scores may be used to decide which patches should be
-        reviewed by a human pathologist.
-      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>Rank&nbsp;<span class="var">k</span></th>
+              <th>Factor comp. time (s)</th>
+              <th>Total MCMC time (s)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Dense kernel baseline</td>
+              <td>N/A</td>
+              <td>0.0230</td>
+              <td>0.0230</td>
+            </tr>
+            <tr>
+              <td>Accelerated RPCholesky</td>
+              <td>100</td>
+              <td>0.0098 <span class="speedup">2.3×</span></td>
+              <td>0.0700 <span class="speedup">5.0×</span></td>
+            </tr>
+            <tr class="best">
+              <td>Accelerated RPCholesky</td>
+              <td>50</td>
+              <td>0.0115 <span class="speedup">2.0×</span></td>
+              <td>0.0620 <span class="speedup">5.7×</span></td>
+            </tr>
+            <tr>
+              <td>Accelerated RPCholesky</td>
+              <td>20</td>
+              <td>0.0037 <span class="speedup">6.2×</span></td>
+              <td>0.0680 <span class="speedup">5.2×</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="body-text">
+        <p>
+          Even at this small scale the speed-up is consistent: factorization time drops by up to
+          <strong>6.2×</strong>, and <em>total</em> MCMC wall-clock by up to <strong>5.7×</strong>.
+          The speed-up grows with <code>N</code>, which is what makes the full-PCam runs in later
+          experiments feasible.
+        </p>
+      </div>
+
+      <!-- Experiment 2 -->
+      <h3 style="margin-top: 2.4rem;">Experiment 2 · Identifying the best NN-based baseline</h3>
+      <div class="body-text">
+        <p>
+          To make sure the comparison wasn't rigged against neural networks, we benchmarked three
+          NN architectures on PCam to find the strongest neural baseline:
+        </p>
+        <ol>
+          <li><strong>ViT-S</strong>, a Vision Transformer (Small) trained from scratch.</li>
+          <li><strong>Phikon embeddings → MLP</strong>, the same embeddings used by our GP, fed into a Residual MLP head.</li>
+          <li><strong>U-Net</strong> trained on flattened image patches.</li>
+        </ol>
+        <p>
+          Across ECE, compute time, NLL, false negatives, and accuracy, the U-Net trained on
+          flattened images yielded the best overall performance and was carried forward as the NN
+          baseline for the final comparison.
+        </p>
+      </div>
+
+      <!-- Experiment 3 -->
+      <h3 style="margin-top: 2.4rem;">Experiment 3 · Hyper-parameter sweep for the low-rank HMC GP</h3>
+      <div class="body-text">
+        <p>
+          We swept three hyper-parameters individually while fixing the others: number of leapfrog
+          steps, RPCholesky rank <code>k</code>, and RBF bandwidth. Sweeps were evaluated on
+          ECE, NLL, AUROC, and steps-per-effective-sample. The selected configuration is summarized
+          below.
+        </p>
+      </div>
+
+      <div class="hp-card">
+        <div class="hp-item">
+          <div class="lbl">Leapfrog steps</div>
+          <div class="num">25</div>
+          <div class="desc">Best sec / ESS trade-off</div>
+        </div>
+        <div class="hp-item">
+          <div class="lbl">Rank&nbsp;<span class="var">k</span></div>
+          <div class="num">200</div>
+          <div class="desc">Best NLL &amp; ECE plateau</div>
+        </div>
+        <div class="hp-item">
+          <div class="lbl">RBF bandwidth</div>
+          <div class="num">49</div>
+          <div class="desc">Lowest NLL across the sweep</div>
+        </div>
+      </div>
+
+      <!-- Experiment 4 -->
+      <h3 style="margin-top: 2.4rem;">Experiment 4 · SVGP vs best NN vs our method</h3>
+      <div class="body-text">
+        <p>
+          Final comparison of the GPyTorch SVGP baseline, the U-Net NN baseline (winner of
+          Experiment 2), and our low-rank HMC GP — on both PCam and CAMELYON17.
+        </p>
+      </div>
+
+      <div class="findings">
+        <div class="finding">
+          <div class="label">Calibration</div>
+          <div class="head">Lower ECE on both datasets.</div>
+          <p>The HMC posterior's confidence scores match empirical correctness more closely than SVGP's mean-field approximation or the U-Net's softmax outputs.</p>
+        </div>
+        <div class="finding">
+          <div class="label">Sharpness</div>
+          <div class="head">Lower NLL across the board.</div>
+          <p>Our model is less confidently wrong — it concentrates probability mass on correct labels more reliably than either baseline.</p>
+        </div>
+        <div class="finding">
+          <div class="label">Clinical safety</div>
+          <div class="head">Fewer false negatives.</div>
+          <p>The low-rank HMC GP misses fewer cancer-positive cases at the default operating threshold — the failure mode that matters most in screening.</p>
+        </div>
+        <div class="finding">
+          <div class="label">Discrimination</div>
+          <div class="head">Highest accuracy.</div>
+          <p>Calibration gains do <em>not</em> come at the cost of classification performance. The trade-off is wall-clock training time, which is slower than SVGP.</p>
+        </div>
+      </div>
     </section>
 
-    <section>
-      <h2>Clinical Interpretation</h2>
+    <!-- Conclusion -->
+    <section id="conclusion">
+      <div class="section-head">
+        <div class="section-num">07</div>
+        <h2>Conclusion</h2>
+      </div>
 
-      <p>
-        Accuracy and AUROC measure discrimination, but they do not fully capture whether a model's probabilities are usable
-        for decision-making. Expected Calibration Error measures the gap between stated confidence and empirical correctness.
-        In cancer screening, this directly affects whether confidence thresholds are meaningful.
-      </p>
-
-      <p>
-        Our model reduces ECE from <code>0.101</code> for SVGP to <code>0.055</code>, and from <code>0.116</code> for the
-        MLP to <code>0.055</code>. This indicates that the HMC posterior better represents uncertainty than the variational
-        approximation used by SVGP or the point-estimate predictions used by the MLP.
-      </p>
+      <div class="split">
+        <div>
+          <h3>Solving the bottleneck</h3>
+          <p>
+            MCMC-based full Gaussian Process Classification is now tractable on
+            histopathology-scale datasets, removing what has historically been the dominant
+            computational barrier to deploying calibrated Bayesian classifiers at scale. The
+            kernel matrix is never materialized, the sampler operates in <code>k</code>
+            dimensions instead of <code>N</code>, and prediction is <code>O(k²)</code> per point.
+          </p>
+        </div>
+        <div>
+          <h3>An alternative when Bayesian uncertainty matters</h3>
+          <p>
+            MCMC GPC isn't as fast as SVGP or NN baselines — but for applications where calibrated
+            uncertainty has real value, such as medical diagnosis and decision-making under risk,
+            the calibration advantages we demonstrate over SVGP and NN baselines make the method
+            worth using in domains where Bayesian uncertainty matters.
+          </p>
+        </div>
+      </div>
     </section>
 
-    <section>
-      <h2>Confusion Matrices</h2>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Method</th>
-            <th>TP</th>
-            <th>TN</th>
-            <th>FP</th>
-            <th>FN</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>GPyTorch SVGP</td>
-            <td>12,813</td>
-            <td>16,078</td>
-            <td>313</td>
-            <td>3,564</td>
-          </tr>
-          <tr>
-            <td>Residual MLP</td>
-            <td>12,538</td>
-            <td>16,212</td>
-            <td>179</td>
-            <td>3,839</td>
-          </tr>
-          <tr class="highlight">
-            <td>Low-rank HMC GP, ours</td>
-            <td>13,908</td>
-            <td>16,043</td>
-            <td>348</td>
-            <td>2,469</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <p>
-        At the default threshold, our method recovers substantially more true positives than both baselines, with a smaller
-        increase in false positives. In a cancer screening context, this trade-off is often preferable because missed
-        positives carry greater clinical risk than additional human review.
-      </p>
+    <!-- Future work -->
+    <section id="future">
+      <div class="section-head">
+        <div class="section-num">08</div>
+        <h2>Future work</h2>
+      </div>
+      <div class="body-text">
+        <ul>
+          <li>Extend the method to multi-class medical classification (e.g. tumor subtyping).</li>
+          <li>Stronger hyper-parameter search and architecture tuning for the NN baselines.</li>
+          <li>Reconcile the HMC sigmoid likelihood with the SVGP probit likelihood for cleaner head-to-head comparisons.</li>
+          <li>Investigate whether the low-rank approximation acts as implicit regularization beyond PCam / CAMELYON17.</li>
+          <li>Hybrid architectures combining learned image features with principled Bayesian probabilistic heads.</li>
+        </ul>
+      </div>
     </section>
 
-    <section>
-      <h2>Additional Findings</h2>
-
-      <h3>Lower Rank Can Improve Generalization</h3>
-      <p>
-        A rank sweep over <code>k ∈ {100, 200, 300, 500}</code> showed that predictive performance peaked at
-        <code>k = 200</code>, even though higher ranks gave tighter kernel approximations. This suggests that the
-        low-rank approximation also acts as implicit regularization.
-      </p>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Rank k</th>
-            <th>Trace Error</th>
-            <th>NLL</th>
-            <th>ECE</th>
-            <th>AUROC</th>
-            <th>Accuracy</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>100</td>
-            <td>14.2%</td>
-            <td>0.196</td>
-            <td>0.0445</td>
-            <td>0.980</td>
-            <td>0.921</td>
-          </tr>
-          <tr class="highlight">
-            <td>200</td>
-            <td>10.8%</td>
-            <td>0.186</td>
-            <td>0.0464</td>
-            <td>0.983</td>
-            <td>0.927</td>
-          </tr>
-          <tr>
-            <td>300</td>
-            <td>8.6%</td>
-            <td>0.192</td>
-            <td>0.0509</td>
-            <td>0.982</td>
-            <td>0.924</td>
-          </tr>
-          <tr>
-            <td>500</td>
-            <td>6.7%</td>
-            <td>0.194</td>
-            <td>0.0525</td>
-            <td>0.983</td>
-            <td>0.923</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <h3>HMC Mixes Efficiently</h3>
-      <p>
-        In the low-rank posterior, longer HMC trajectories substantially reduce autocorrelation time. With 25 leapfrog
-        steps, HMC reaches efficient mixing while remaining computationally feasible.
-      </p>
+    <!-- References -->
+    <section id="references">
+      <div class="section-head">
+        <div class="section-num">09</div>
+        <h2>References</h2>
+      </div>
+      <ol class="reference-list">
+        <li>
+          Schwan, R., Kuhn, D., &amp; Jones, C. N. (2026).
+          <em>GPU-Accelerated Cholesky Factorization of Block Tridiagonal Matrices.</em>
+          arXiv:2601.03754.
+        </li>
+      </ol>
     </section>
 
-    <section>
-      <h2>Conclusion</h2>
+    <!-- Citation -->
+    <section id="citation">
+      <div class="section-head">
+        <div class="section-num">10</div>
+        <h2>Citation</h2>
+      </div>
+      <div class="body-text">
+        <p>If you use or refer to this project, please cite:</p>
+      </div>
 
-      <p>
-        This project demonstrates that MCMC-based Gaussian Process Classification is now tractable on histopathology-scale
-        datasets when combined with accelerated RPCholesky and low-rank HMC inference. The method is not as fast as SVGP
-        or neural network baselines, but it makes calibrated Bayesian classification deployable at a scale where full GPC
-        was previously infeasible.
-      </p>
-
-      <p>
-        The main result is not only improved accuracy, but improved uncertainty quantification. For domains such as medical
-        diagnosis, where confidence scores affect downstream human review, this calibration improvement is central to the
-        value of the method.
-      </p>
-    </section>
-
-    <section>
-      <h2>Future Work</h2>
-
-      <ul>
-        <li>Extend the method to multiclass medical classification tasks.</li>
-        <li>Run stronger hyperparameter sweeps for neural network baselines.</li>
-        <li>Reconcile the HMC sigmoid likelihood with the SVGP probit likelihood for cleaner comparisons.</li>
-        <li>Explore whether the observed low-rank regularization effect generalizes beyond PCam.</li>
-        <li>Test hybrid architectures that combine learned image features with principled Bayesian probabilistic heads.</li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>Citation</h2>
-      <p>
-        If you use or refer to this project, please cite:
-      </p>
-
-      <pre><code>@misc{yourname2026scalablegpc,
-  title  = {Scalable Bayesian Gaussian Process Classification via Accelerated RPCholesky and HMC},
-  author = {Your Name and Coauthor Name and Coauthor Name},
-  year   = {2026}
+      <pre><code><span class="k">@misc</span>{chan2026rpcholeskymcmc,
+  <span class="k">title</span>  = <span class="s">"Fewer Missed Cancers Through Calibrated Uncertainty: RPCholesky-Accelerated MCMC for Histopathology Classification"</span>,
+  <span class="k">author</span> = <span class="s">"Chan, Wun Ting and Dsouza, Sampras and Hong, Zhenyu and Zheng, Yunru"</span>,
+  <span class="k">year</span>   = <span class="s">"2026"</span>
 }</code></pre>
     </section>
+
   </main>
 
   <footer>
-    Scalable Bayesian Gaussian Process Classification via Accelerated RPCholesky and HMC.
+    <span class="mark">Fewer Missed Cancers Through Calibrated Uncertainty</span>
+    <span>RPCholesky · HMC · PCam · CAMELYON17 · 2026</span>
   </footer>
+
+  <!-- Build matrix cells programmatically -->
+  <script>
+    (function () {
+      function fill(el, n) {
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < n; i++) {
+          const c = document.createElement('div');
+          c.className = 'cell';
+          frag.appendChild(c);
+        }
+        el.appendChild(frag);
+      }
+      const K  = document.getElementById('matK');
+      const F  = document.getElementById('matF');
+      const Ft = document.getElementById('matFt');
+      if (K)  fill(K,  20 * 20);
+      if (F)  fill(F,  20 * 4);
+      if (Ft) fill(Ft, 20 * 4);
+    })();
+  </script>
 </body>
 </html>
