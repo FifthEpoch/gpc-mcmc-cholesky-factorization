@@ -459,6 +459,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-train", type=int, default=None)
     parser.add_argument("--max-valid", type=int, default=None)
     parser.add_argument("--max-test", type=int, default=None)
+    parser.add_argument(
+        "--no-standardize",
+        action="store_false",
+        dest="standardize",
+        help="Disable train-set feature standardization.",
+    )
+    parser.set_defaults(standardize=True)
 
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n-bins", type=int, default=15)
@@ -525,13 +532,19 @@ def main() -> None:
         seed=args.seed + 2,
     )
 
-    train_mean = train_raw.X.mean(axis=0, keepdims=True)
-    train_std = train_raw.X.std(axis=0, keepdims=True)
-    train_std = np.where(train_std < 1e-6, 1.0, train_std)
-
-    train = standardize_split(train_raw, train_mean, train_std)
-    valid = standardize_split(valid_raw, train_mean, train_std)
-    test = standardize_split(test_raw, train_mean, train_std)
+    if args.standardize:
+        train_mean = train_raw.X.mean(axis=0, keepdims=True)
+        train_std = train_raw.X.std(axis=0, keepdims=True)
+        train_std = np.where(train_std < 1e-6, 1.0, train_std)
+        train = standardize_split(train_raw, train_mean, train_std)
+        valid = standardize_split(valid_raw, train_mean, train_std)
+        test = standardize_split(test_raw, train_mean, train_std)
+    else:
+        train_mean = np.zeros((1, train_raw.X.shape[1]), dtype=np.float32)
+        train_std = np.ones((1, train_raw.X.shape[1]), dtype=np.float32)
+        train = train_raw
+        valid = valid_raw
+        test = test_raw
 
     print("Loaded PCam-HG embeddings:")
     print(f"  train: X={train.X.shape}, y={train.y.shape}, pos_rate={train.y.mean():.4f}")
@@ -543,6 +556,7 @@ def main() -> None:
     print(f"  train labels    : {train.label_path}")
     print(f"  valid labels    : {valid.label_path}")
     print(f"  test  labels    : {test.label_path}")
+    print(f"  standardize     : {args.standardize}")
 
     device = torch.device(
         "cuda" if (torch.cuda.is_available() and not args.no_cuda) else "cpu"
@@ -735,6 +749,9 @@ def main() -> None:
         learning_rate=args.learning_rate,
         lengthscale=float(initial_lengthscale),
         outputscale=float(args.outputscale),
+        standardize=bool(args.standardize),
+        train_mean=train_mean.astype(np.float32, copy=False),
+        train_std=train_std.astype(np.float32, copy=False),
         train_time=float(train_time),
         prediction_time=float(pred_time),
         final_loss=float(epoch_losses[-1]) if epoch_losses else float("nan"),

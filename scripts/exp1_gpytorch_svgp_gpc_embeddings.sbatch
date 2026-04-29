@@ -33,6 +33,7 @@ export PYTHONNOUSERSITE=1
 #   MAX_TRAIN          empty means full train split
 #   MAX_VALID          empty means full valid split
 #   MAX_TEST           empty means full test split
+#   STANDARDIZE        1 | 0  (default: 1)
 #   SEED               42
 #   N_BINS             15
 #   THRESHOLD          0.5
@@ -81,6 +82,7 @@ LENGTHSCALE="${LENGTHSCALE:-}"
 MAX_TRAIN="${MAX_TRAIN:-}"
 MAX_VALID="${MAX_VALID:-}"
 MAX_TEST="${MAX_TEST:-}"
+STANDARDIZE="${STANDARDIZE:-1}"
 SEED="${SEED:-42}"
 N_BINS="${N_BINS:-15}"
 THRESHOLD="${THRESHOLD:-0.5}"
@@ -180,6 +182,7 @@ echo "Lengthscale    : ${LENGTHSCALE:-auto}"
 echo "Max train      : ${MAX_TRAIN:-full}"
 echo "Max valid      : ${MAX_VALID:-full}"
 echo "Max test       : ${MAX_TEST:-full}"
+echo "Standardize    : ${STANDARDIZE}"
 echo "Seed           : ${SEED}"
 echo "N bins         : ${N_BINS}"
 echo "Threshold      : ${THRESHOLD}"
@@ -218,6 +221,9 @@ if [ -n "${MAX_VALID}" ]; then
 fi
 if [ -n "${MAX_TEST}" ]; then
   CMD+=("--max-test" "${MAX_TEST}")
+fi
+if [ "${STANDARDIZE}" != "1" ]; then
+  CMD+=("--no-standardize")
 fi
 if [ "${NO_CUDA}" = "1" ]; then
   CMD+=("--no-cuda")
