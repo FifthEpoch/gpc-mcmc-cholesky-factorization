@@ -12,6 +12,7 @@
 #SBATCH --error=slurm_logs/hmc_rose/%x_%j.err
 
 set -euo pipefail
+export PYTHONNOUSERSITE=1
 
 # Submit with:
 #   sbatch --export=ALL,NETID=<your-netid> scripts/exp2_rose_exp1_metrics_pcam_3k_500_bandwidth_sweep_standardized.sbatch
@@ -30,18 +31,116 @@ TRAIN_SUBSAMPLE="${TRAIN_SUBSAMPLE:-3000}"
 TEST_SUBSAMPLE="${TEST_SUBSAMPLE:-500}"
 SEED="${SEED:-42}"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RUN_SCRIPT="${SCRIPT_DIR}/exp2_rose_exp1_metrics_pcam_3k_500.sbatch"
+SBATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$(cd "${SBATCH_DIR}/.." && pwd)}}"
 
-if [ ! -f "${RUN_SCRIPT}" ]; then
-  echo "ERROR: Missing run script: ${RUN_SCRIPT}" >&2
+infer_netid() {
+  case "$1" in
+    /scratch/*/*)
+      printf '%s\n' "$1" | awk -F/ '{print $3}'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+NETID="${NETID:-}"
+if [ -z "${NETID}" ]; then
+  NETID="$(infer_netid "${PROJECT_ROOT}" 2>/dev/null || true)"
+fi
+if [ -z "${NETID}" ] && [ -n "${USER:-}" ]; then
+  NETID="${USER}"
+fi
+if [ -z "${NETID}" ]; then
+  echo "ERROR: Could not infer NETID. Submit with --export=ALL,NETID=<your-netid>." >&2
   exit 1
 fi
 
-mkdir -p slurm_logs/hmc_rose
+SCRATCH_BASE="/scratch/${NETID}"
+CONDA_ENV="${CONDA_ENV:-${SCRATCH_BASE}/conda-envs/gpc}"
+DATASET_ROOT="${DATASET_ROOT:-datasets/pcam-hg}"
+TRAIN_EMBEDDINGS="${TRAIN_EMBEDDINGS:-${DATASET_ROOT}/train/embeddings/projected_512.npy}"
+TRAIN_LABELS="${TRAIN_LABELS:-${DATASET_ROOT}/train/embeddings/y_embeddings.npy}"
+TEST_EMBEDDINGS="${TEST_EMBEDDINGS:-${DATASET_ROOT}/test/embeddings/projected_512.npy}"
+TEST_LABELS="${TEST_LABELS:-${DATASET_ROOT}/test/embeddings/y_embeddings.npy}"
+BLOCK_SIZE="${BLOCK_SIZE:-10}"
+STOPTOL="${STOPTOL:-1e-13}"
+PREDICTION_BATCH_SIZE="${PREDICTION_BATCH_SIZE:-512}"
+
+if [ -f "${PROJECT_ROOT}/scripts/set_scratch_env.sh" ]; then
+  # shellcheck disable=SC1091
+  source "${PROJECT_ROOT}/scripts/set_scratch_env.sh"
+fi
+
+load_conda() {
+  module purge >/dev/null 2>&1 || true
+
+  local candidates=(
+    "/scratch/${NETID}/miniconda3/etc/profile.d/conda.sh"
+    "${HOME}/miniconda3/etc/profile.d/conda.sh"
+    "/share/apps/anaconda3/2025.06/etc/profile.d/conda.sh"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [ -f "${candidate}" ]; then
+      # shellcheck disable=SC1090
+      source "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "ERROR: Could not find conda.sh for NETID=${NETID}." >&2
+  return 1
+}
+
+load_conda
+
+export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
+set +u
+conda activate "${CONDA_ENV}"
+set -u
+
+if [ -z "${CONDA_PREFIX:-}" ] || [ ! -d "${CONDA_PREFIX}" ]; then
+  echo "ERROR: Failed to activate conda environment: ${CONDA_ENV}" >&2
+  exit 1
+fi
+
+unset PYTHONHOME
+unset PYTHONPATH
+export PYTHONPATH="${PROJECT_ROOT}"
+export PATH="${CONDA_PREFIX}/bin:${PATH}"
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export MPLCONFIGDIR="${TMPDIR:-/tmp}/mpl-${SLURM_JOB_ID:-$$}"
+
+PYTHON="${CONDA_PREFIX}/bin/python"
+
+cd "${PROJECT_ROOT}"
+mkdir -p slurm_logs/hmc_rose "${MPLCONFIGDIR}"
+
+"${PYTHON}" -c "import numpy, scipy, emcee; print('Env import check: OK')" || {
+  echo "ERROR: Import check failed in ${CONDA_ENV}." >&2
+  exit 1
+}
+
+for path in \
+  "${TRAIN_EMBEDDINGS}" \
+  "${TRAIN_LABELS}" \
+  "${TEST_EMBEDDINGS}" \
+  "${TEST_LABELS}" \
+  "experiments/exp_rpcholesky_embeddings.py" \
+  "experiments/exp2_rose_exp1_metrics.py"; do
+  if [ ! -f "${path}" ]; then
+    echo "ERROR: Missing required file: ${PROJECT_ROOT}/${path}" >&2
+    exit 1
+  fi
+done
 
 echo "=============================================================================="
-echo "Submitting standardized bandwidth sweep for exp2_rose_exp1_metrics"
+echo "Running standardized bandwidth sweep for exp2_rose_exp1_metrics"
 echo "Bandwidths      : ${BANDWIDTH_VALUES}"
 echo "Train/test      : ${TRAIN_SUBSAMPLE}/${TEST_SUBSAMPLE}"
 echo "k               : ${K_VALUE}"
@@ -56,26 +155,40 @@ for bw in ${BANDWIDTH_VALUES}; do
   output_dir="data/exp2_rose_exp1_metrics_pcam_${TRAIN_SUBSAMPLE}_${TEST_SUBSAMPLE}_standardized_bw${bw_tag}"
 
   echo
-  echo "Submitting bandwidth=${bw}"
+  echo "Running bandwidth=${bw}"
   echo "  factor_dir=${factor_dir}"
   echo "  output_dir=${output_dir}"
 
-  sbatch --export=ALL,\
-NETID="${NETID:-}",\
-BANDWIDTH="${bw}",\
-K_VALUE="${K_VALUE}",\
-N_SAMPLES="${N_SAMPLES}",\
-N_WARMUP="${N_WARMUP}",\
-N_LEAPFROG="${N_LEAPFROG}",\
-TRAIN_SUBSAMPLE="${TRAIN_SUBSAMPLE}",\
-TEST_SUBSAMPLE="${TEST_SUBSAMPLE}",\
-STANDARDIZE_FACTOR=1,\
-STANDARDIZE_FROM_FACTOR=1,\
-SEED="${SEED}",\
-FACTOR_DIR="${factor_dir}",\
-OUTPUT_DIR="${output_dir}" \
-    "${RUN_SCRIPT}"
+  mkdir -p "${factor_dir}" "${output_dir}"
+
+  "${PYTHON}" experiments/exp_rpcholesky_embeddings.py \
+    --embeddings "${TRAIN_EMBEDDINGS}" \
+    --labels "${TRAIN_LABELS}" \
+    --subsample "${TRAIN_SUBSAMPLE}" \
+    --stratified-subsample \
+    --standardize \
+    --k-values "${K_VALUE}" \
+    --output-dir "${factor_dir}" \
+    --bandwidth "${bw}" \
+    --block-size "${BLOCK_SIZE}" \
+    --stoptol "${STOPTOL}" \
+    --seed "${SEED}"
+
+  "${PYTHON}" experiments/exp2_rose_exp1_metrics.py \
+    --factor-dir "${factor_dir}" \
+    --test-embeddings "${TEST_EMBEDDINGS}" \
+    --test-labels "${TEST_LABELS}" \
+    --k "${K_VALUE}" \
+    --subsample-test "${TEST_SUBSAMPLE}" \
+    --stratified-subsample-test \
+    --standardize-from-factor \
+    --n-samples "${N_SAMPLES}" \
+    --n-warmup "${N_WARMUP}" \
+    --n-leapfrog "${N_LEAPFROG}" \
+    --prediction-batch-size "${PREDICTION_BATCH_SIZE}" \
+    --seed "${SEED}" \
+    --output-dir "${output_dir}"
 done
 
 echo
-echo "All bandwidth jobs submitted."
+echo "Bandwidth sweep complete."
