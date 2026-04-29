@@ -21,6 +21,7 @@ export PYTHONNOUSERSITE=1
 #   PROJECT_ROOT, CONDA_ENV, DATASET_ROOT
 #   K_VALUE, BANDWIDTH, BLOCK_SIZE, STOPTOL, SEED
 #   N_SAMPLES, N_WARMUP, N_LEAPFROG, PREDICTION_BATCH_SIZE
+#   STANDARDIZE_FACTOR, STANDARDIZE_FROM_FACTOR
 #   FACTOR_DIR, OUTPUT_DIR
 
 SBATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -70,6 +71,8 @@ N_SAMPLES="${N_SAMPLES:-2000}"
 N_WARMUP="${N_WARMUP:-200}"
 N_LEAPFROG="${N_LEAPFROG:-12}"
 PREDICTION_BATCH_SIZE="${PREDICTION_BATCH_SIZE:-512}"
+STANDARDIZE_FACTOR="${STANDARDIZE_FACTOR:-1}"
+STANDARDIZE_FROM_FACTOR="${STANDARDIZE_FROM_FACTOR:-1}"
 
 FACTOR_DIR="${FACTOR_DIR:-${DATASET_ROOT}/train/embeddings/exp2_rpchol_3k_stratified_standardized_bw20}"
 OUTPUT_DIR="${OUTPUT_DIR:-data/exp2_rose_exp1_metrics_pcam_3k_500_bw20}"
@@ -159,7 +162,8 @@ echo "Test embeddings        : ${TEST_EMBEDDINGS}"
 echo "Test labels            : ${TEST_LABELS}"
 echo "Train subsample        : ${TRAIN_SUBSAMPLE} stratified, seed ${SEED}"
 echo "Test subsample         : ${TEST_SUBSAMPLE} stratified, seed $((SEED + 1))"
-echo "Standardization        : train moments saved in factor dir, applied to test"
+echo "Standardize factor     : ${STANDARDIZE_FACTOR}"
+echo "Standardize test       : ${STANDARDIZE_FROM_FACTOR}"
 echo "Rank k                 : ${K_VALUE}"
 echo "Bandwidth              : ${BANDWIDTH}"
 echo "Factor dir             : ${FACTOR_DIR}"
@@ -168,35 +172,49 @@ echo "HMC samples/warmup     : ${N_SAMPLES}/${N_WARMUP}"
 echo "Leapfrog steps         : ${N_LEAPFROG}"
 echo "=============================================================================="
 
-echo "[1/2] Building stratified standardized RP-Cholesky factor on 3000 PCam train rows..."
-"${PYTHON}" experiments/exp_rpcholesky_embeddings.py \
+echo "[1/2] Building stratified RP-Cholesky factor on ${TRAIN_SUBSAMPLE} PCam train rows..."
+FACTOR_CMD=(
+  "${PYTHON}" "experiments/exp_rpcholesky_embeddings.py"
   --embeddings "${TRAIN_EMBEDDINGS}" \
   --labels "${TRAIN_LABELS}" \
   --subsample "${TRAIN_SUBSAMPLE}" \
   --stratified-subsample \
-  --standardize \
   --k-values "${K_VALUE}" \
   --output-dir "${FACTOR_DIR}" \
   --bandwidth "${BANDWIDTH}" \
   --block-size "${BLOCK_SIZE}" \
   --stoptol "${STOPTOL}" \
   --seed "${SEED}"
+)
 
-echo "[2/2] Running exp2_rose_exp1_metrics on 500 stratified PCam test rows..."
-"${PYTHON}" experiments/exp2_rose_exp1_metrics.py \
+if [ "${STANDARDIZE_FACTOR}" = "1" ]; then
+  FACTOR_CMD+=("--standardize")
+fi
+
+"${FACTOR_CMD[@]}"
+
+echo "[2/2] Running exp2_rose_exp1_metrics on ${TEST_SUBSAMPLE} stratified PCam test rows..."
+METRICS_CMD=(
+  "${PYTHON}" "experiments/exp2_rose_exp1_metrics.py"
   --factor-dir "${FACTOR_DIR}" \
   --test-embeddings "${TEST_EMBEDDINGS}" \
   --test-labels "${TEST_LABELS}" \
   --k "${K_VALUE}" \
   --subsample-test "${TEST_SUBSAMPLE}" \
   --stratified-subsample-test \
-  --standardize-from-factor \
   --n-samples "${N_SAMPLES}" \
   --n-warmup "${N_WARMUP}" \
   --n-leapfrog "${N_LEAPFROG}" \
   --prediction-batch-size "${PREDICTION_BATCH_SIZE}" \
   --seed "${SEED}" \
   --output-dir "${OUTPUT_DIR}"
+)
+
+if [ "${STANDARDIZE_FROM_FACTOR}" = "1" ]; then
+  METRICS_CMD+=("--standardize-from-factor")
+fi
+
+"${METRICS_CMD[@]}"
 
 echo "=============================================================================="
 echo "Done: $(date)"
